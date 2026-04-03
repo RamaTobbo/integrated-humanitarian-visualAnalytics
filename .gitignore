@@ -1,0 +1,15 @@
+*.zip
+*.gz
+*.xlsx
+*.xls
+*.csv
+*.shp
+*.dbf
+*.shx
+*.prj
+*.cpg
+*.gpkg
+*.geojson
+__pycache__/
+*.pyc
+data/
