@@ -5,7 +5,7 @@ from pathlib import Path
 # PATHS
 # ==================================================
 input_file = Path("data/raw/acess/road_status_events_template.csv")
-output_dir = Path("data/cleaned/access")
+output_dir = Path("data/cleaned/acess")
 output_dir.mkdir(parents=True, exist_ok=True)
 
 output_file = output_dir / "road_access_admin2.csv"
