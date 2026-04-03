@@ -567,9 +567,9 @@ if st.session_state["view"] == "world":
     )
     st.dataframe(top_table, use_container_width=True)
 
-    if st.button("Open Lebanon view"):
-        st.session_state["view"] = "lebanon"
-        st.rerun()
+    # if st.button("Open Lebanon view"):
+    #     st.session_state["view"] = "lebanon"
+    #     st.rerun()
 
 # ==================================================
 # LEBANON VIEW
@@ -781,31 +781,31 @@ else:
     )
     st.dataframe(district_table, use_container_width=True)
 
-    with st.expander("Debug district matching"):
-        unmatched_data = sorted(
-            filtered_lbn.loc[filtered_lbn["shapeName"].isna(), "admin2"]
-            .dropna()
-            .astype(str)
-            .unique()
-            .tolist()
-        )
+    # with st.expander("Debug district matching"):
+    #     unmatched_data = sorted(
+    #         filtered_lbn.loc[filtered_lbn["shapeName"].isna(), "admin2"]
+    #         .dropna()
+    #         .astype(str)
+    #         .unique()
+    #         .tolist()
+    #     )
 
-        geo_names = sorted(lbn_admin2["shapeName"].tolist())
-        matched_names = sorted(
-            filtered_lbn["shapeName"].dropna().astype(str).unique().tolist()
-        )
+        # geo_names = sorted(lbn_admin2["shapeName"].tolist())
+        # matched_names = sorted(
+        #     filtered_lbn["shapeName"].dropna().astype(str).unique().tolist()
+        # )
 
-        st.write("GeoJSON districts:", geo_names)
-        st.write("Matched names from conflict data:", matched_names)
-        st.write("Unmatched names from conflict data:", unmatched_data)
-        st.write("Real max used for color scale:", float(real_max))
-        st.write("Duplicate shapeName in GeoJSON:", int(lbn_admin2["shapeName"].duplicated().sum()))
-        st.write("Invalid geometries in GeoJSON:", int((~lbn_admin2.is_valid).sum()))
+        # st.write("GeoJSON districts:", geo_names)
+        # st.write("Matched names from conflict data:", matched_names)
+        # st.write("Unmatched names from conflict data:", unmatched_data)
+        # st.write("Real max used for color scale:", float(real_max))
+        # st.write("Duplicate shapeName in GeoJSON:", int(lbn_admin2["shapeName"].duplicated().sum()))
+        # st.write("Invalid geometries in GeoJSON:", int((~lbn_admin2.is_valid).sum()))
 
-    with st.expander("Check district values on map"):
-        st.dataframe(
-            merged_lbn[["shapeName", "events", "fatalities"]]
-            .sort_values(metric, ascending=False)
-            .reset_index(drop=True),
-            use_container_width=True,
-        )
+    # with st.expander("Check district values on map"):
+    #     st.dataframe(
+    #         merged_lbn[["shapeName", "events", "fatalities"]]
+    #         .sort_values(metric, ascending=False)
+    #         .reset_index(drop=True),
+    #         use_container_width=True,
+    #     )
