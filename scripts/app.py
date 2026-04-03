@@ -12,6 +12,7 @@ st.set_page_config(page_title="Global Conflict Dashboard", layout="wide")
 # ==================================================
 # PATHS
 # ==================================================
+priority_path = Path("data/cleaned/lebanon/lebanon_priority_admin2.csv")
 world_geojson_path = Path("data/raw/boundaries/world_countries.geojson")
 lbn_admin2_path = Path("data/raw/boundaries/geoBoundaries-LBN-ADM2.geojson")
 conflict_country_path = Path("data/cleaned/global/conflict_country_monthlybytype.csv")
@@ -369,7 +370,35 @@ def load_lbn_admin2():
 
     return gdf
 
+@st.cache_data(show_spinner=False)
+def load_lbn_priority():
+    df = pd.read_csv(priority_path)
 
+    df["admin2_norm"] = df["admin2_norm"].astype(str).str.strip().str.lower()
+    df["shapeName"] = df["admin2_norm"].apply(to_geo_district_name)
+
+    df["year"] = pd.to_numeric(df["year"], errors="coerce")
+    df["month_num"] = pd.to_numeric(df["month_num"], errors="coerce")
+    df["month"] = df["month"].astype(str).str.strip()
+
+    df["events"] = pd.to_numeric(df["events"], errors="coerce").fillna(0)
+    df["fatalities"] = pd.to_numeric(df["fatalities"], errors="coerce").fillna(0)
+    df["road_access_penalty"] = pd.to_numeric(df["road_access_penalty"], errors="coerce").fillna(0)
+    df["health_access_penalty"] = pd.to_numeric(df["health_access_penalty"], errors="coerce").fillna(0)
+    df["priority_score"] = pd.to_numeric(df["priority_score"], errors="coerce").fillna(0)
+    df["priority_rank"] = pd.to_numeric(df["priority_rank"], errors="coerce")
+
+    df = df[
+        df["year"].notna()
+        & df["month_num"].notna()
+        & df["month"].notna()
+        & df["shapeName"].notna()
+    ].copy()
+
+    df["year"] = df["year"].astype(int)
+    df["month_num"] = df["month_num"].astype(int)
+
+    return df
 # ==================================================
 # LOAD EVERYTHING
 # ==================================================
@@ -379,6 +408,7 @@ country_conflict = load_country_conflict()
 admin_conflict = load_admin_conflict()
 world = load_world()
 lbn_admin2 = load_lbn_admin2()
+lbn_priority = load_lbn_priority()
 
 lebanon_only = admin_conflict[
     admin_conflict["country"].astype(str).str.lower() == "lebanon"
@@ -581,74 +611,383 @@ else:
         st.session_state["view"] = "world"
         st.rerun()
 
-    lbn_years = sorted(lebanon_only["year"].unique().tolist())
-    selected_year = st.sidebar.selectbox(
-        "Year",
-        lbn_years,
-        index=lbn_years.index(st.session_state["lbn_year"])
-        if st.session_state["lbn_year"] in lbn_years
-        else 0,
+    view_mode = st.sidebar.selectbox(
+        "Lebanon View",
+        ["Conflict View", "Priority View"]
     )
-    st.session_state["lbn_year"] = selected_year
 
-    available_months = (
-        lebanon_only.loc[
-            lebanon_only["year"] == selected_year, ["month_num", "month"]
-        ]
-        .drop_duplicates()
-        .sort_values("month_num")
-    )
-    month_list = available_months["month"].tolist()
+    # ==========================================
+    # CONFLICT VIEW
+    # ==========================================
+    if view_mode == "Conflict View":
+        lbn_years = sorted(lebanon_only["year"].unique().tolist())
+        selected_year = st.sidebar.selectbox(
+            "Year",
+            lbn_years,
+            index=lbn_years.index(st.session_state["lbn_year"])
+            if st.session_state["lbn_year"] in lbn_years
+            else 0,
+        )
+        st.session_state["lbn_year"] = selected_year
 
-    selected_month = st.sidebar.selectbox(
-        "Month",
-        month_list,
-        index=month_list.index(st.session_state["lbn_month"])
-        if st.session_state["lbn_month"] in month_list
-        else 0,
-    )
-    st.session_state["lbn_month"] = selected_month
+        available_months = (
+            lebanon_only.loc[
+                lebanon_only["year"] == selected_year, ["month_num", "month"]
+            ]
+            .drop_duplicates()
+            .sort_values("month_num")
+        )
+        month_list = available_months["month"].tolist()
 
-    available_event_types = (
-        lebanon_only.loc[
+        selected_month = st.sidebar.selectbox(
+            "Month",
+            month_list,
+            index=month_list.index(st.session_state["lbn_month"])
+            if st.session_state["lbn_month"] in month_list
+            else 0,
+        )
+        st.session_state["lbn_month"] = selected_month
+
+        available_event_types = (
+            lebanon_only.loc[
+                (lebanon_only["year"] == selected_year)
+                & (lebanon_only["month"].str.lower() == selected_month.lower()),
+                "event_type",
+            ]
+            .dropna()
+            .drop_duplicates()
+            .sort_values()
+            .tolist()
+        )
+        available_event_types = ["All"] + available_event_types
+
+        selected_event_type = st.sidebar.selectbox(
+            "Event Type",
+            available_event_types,
+            index=available_event_types.index(st.session_state["lbn_event_type"])
+            if st.session_state["lbn_event_type"] in available_event_types
+            else 0,
+        )
+        st.session_state["lbn_event_type"] = selected_event_type
+
+        metric = st.sidebar.selectbox(
+            "Metric",
+            ["events", "fatalities"],
+            index=0 if st.session_state["lbn_metric"] == "events" else 1,
+        )
+        st.session_state["lbn_metric"] = metric
+
+        st.title("Lebanon District Map")
+        st.caption(f"{selected_month} {selected_year} | Event Type: {selected_event_type}")
+
+        filtered_lbn = lebanon_only[
             (lebanon_only["year"] == selected_year)
-            & (lebanon_only["month"].str.lower() == selected_month.lower()),
-            "event_type",
-        ]
-        .dropna()
-        .drop_duplicates()
-        .sort_values()
-        .tolist()
-    )
-    available_event_types = ["All"] + available_event_types
+            & (lebanon_only["month"].str.lower() == selected_month.lower())
+        ].copy()
 
-    selected_event_type = st.sidebar.selectbox(
-        "Event Type",
-        available_event_types,
-        index=available_event_types.index(st.session_state["lbn_event_type"])
-        if st.session_state["lbn_event_type"] in available_event_types
-        else 0,
-    )
-    st.session_state["lbn_event_type"] = selected_event_type
+        filtered_lbn = filter_event_type(filtered_lbn, selected_event_type)
+        filtered_lbn["shapeName"] = filtered_lbn["admin2"].apply(to_geo_district_name)
 
-    metric = st.sidebar.selectbox(
-        "Metric",
-        ["events", "fatalities"],
-        index=0 if st.session_state["lbn_metric"] == "events" else 1,
-    )
-    st.session_state["lbn_metric"] = metric
+        if filtered_lbn.empty:
+            district_values = pd.DataFrame(columns=["shapeName", "events", "fatalities"])
+        else:
+            district_values = (
+                filtered_lbn.dropna(subset=["shapeName"])
+                .groupby("shapeName", as_index=False)
+                .agg({"events": "sum", "fatalities": "sum"})
+            )
 
-    st.title("Lebanon District Map")
-    st.caption(f"{selected_month} {selected_year} | Event Type: {selected_event_type}")
+        merged_lbn = lbn_admin2.merge(
+            district_values,
+            how="left",
+            on="shapeName",
+        )
 
-    filtered_lbn = lebanon_only[
-        (lebanon_only["year"] == selected_year)
-        & (lebanon_only["month"].str.lower() == selected_month.lower())
-    ].copy()
+        merged_lbn["events"] = pd.to_numeric(merged_lbn["events"], errors="coerce").fillna(0)
+        merged_lbn["fatalities"] = pd.to_numeric(merged_lbn["fatalities"], errors="coerce").fillna(0)
 
-    filtered_lbn = filter_event_type(filtered_lbn, selected_event_type)
-    filtered_lbn["shapeName"] = filtered_lbn["admin2"].apply(to_geo_district_name)
+        merged_lbn = repair_geometries(merged_lbn)
 
+        total_events = int(merged_lbn["events"].sum())
+        total_fatalities = int(merged_lbn["fatalities"].sum())
+        districts_with_data = int((merged_lbn[metric] > 0).sum())
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Lebanon events", f"{total_events:,}")
+        c2.metric("Lebanon fatalities", f"{total_fatalities:,}")
+        c3.metric("Districts with data", f"{districts_with_data:,}")
+
+        base_df = merged_lbn.copy()
+        plot_df = merged_lbn[merged_lbn[metric] > 0].copy()
+
+        color_scale = "YlOrRd" if metric == "events" else "Reds"
+        real_max = float(plot_df[metric].max()) if not plot_df.empty else 1.0
+        if real_max <= 0:
+            real_max = 1.0
+
+        minx, miny, maxx, maxy = lbn_admin2.total_bounds
+        pad_x = (maxx - minx) * 0.08
+        pad_y = (maxy - miny) * 0.08
+
+        fig_lbn = go.Figure()
+
+        fig_lbn.add_trace(
+            go.Choropleth(
+                geojson=json.loads(base_df.to_json()),
+                locations=base_df["shapeName"],
+                z=[0] * len(base_df),
+                featureidkey="properties.shapeName",
+                colorscale=[[0, "white"], [1, "white"]],
+                zmin=0,
+                zmax=1,
+                showscale=False,
+                marker_line_width=0,
+                marker_line_color="rgba(0,0,0,0)",
+                customdata=make_hover_customdata(base_df),
+                hovertemplate=(
+                    "<b>%{location}</b><br>"
+                    "events=%{customdata[0]:.0f}<br>"
+                    "fatalities=%{customdata[1]:.0f}<extra></extra>"
+                ),
+            )
+        )
+
+        if not plot_df.empty:
+            fig_lbn.add_trace(
+                go.Choropleth(
+                    geojson=json.loads(plot_df.to_json()),
+                    locations=plot_df["shapeName"],
+                    z=plot_df[metric],
+                    featureidkey="properties.shapeName",
+                    colorscale=color_scale,
+                    zmin=0,
+                    zmax=real_max,
+                    marker_line_width=0,
+                    marker_line_color="rgba(0,0,0,0)",
+                    colorbar=dict(title=metric.capitalize()),
+                    customdata=make_hover_customdata(plot_df),
+                    hovertemplate=(
+                        "<b>%{location}</b><br>"
+                        "events=%{customdata[0]:.0f}<br>"
+                        "fatalities=%{customdata[1]:.0f}<extra></extra>"
+                    ),
+                )
+            )
+
+        fig_lbn.update_geos(
+            visible=False,
+            bgcolor="white",
+            showland=False,
+            showcountries=False,
+            showcoastlines=False,
+            showocean=False,
+            showlakes=False,
+            showrivers=False,
+            lonaxis_range=[minx - pad_x, maxx + pad_x],
+            lataxis_range=[miny - pad_y, maxy + pad_y],
+        )
+
+        fig_lbn.update_layout(
+            title=f"Lebanon Districts - {metric.capitalize()} ({selected_month} {selected_year}) | {selected_event_type}",
+            margin=dict(l=0, r=0, t=60, b=0),
+            height=700,
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+        )
+
+        add_district_boundaries(fig_lbn, lbn_admin2)
+        add_country_outline(fig_lbn, lbn_admin2)
+
+        st.plotly_chart(fig_lbn, use_container_width=True)
+
+        st.subheader(f"Top 10 Lebanon districts by {metric}")
+        top_admin2 = (
+            merged_lbn[["shapeName", "events", "fatalities"]]
+            .sort_values(metric, ascending=False)
+            .head(10)
+            .reset_index(drop=True)
+        )
+        top_admin2.index = top_admin2.index + 1
+
+        district_table = top_admin2[["shapeName", metric]].rename(
+            columns={"shapeName": "District", metric: metric.capitalize()}
+        )
+        st.dataframe(district_table, use_container_width=True)
+
+    # ==========================================
+    # PRIORITY VIEW
+    # ==========================================
+    else:
+        lbn_years = sorted(lbn_priority["year"].unique().tolist())
+        selected_year = st.sidebar.selectbox("Year", lbn_years)
+
+        available_months = (
+            lbn_priority.loc[
+                lbn_priority["year"] == selected_year, ["month_num", "month"]
+            ]
+            .drop_duplicates()
+            .sort_values("month_num")
+        )
+        month_list = available_months["month"].tolist()
+        selected_month = st.sidebar.selectbox("Month", month_list)
+
+        st.title("Lebanon Priority Map")
+        st.caption(f"{selected_month} {selected_year} | Combined conflict + access score")
+
+        filtered_priority = lbn_priority[
+            (lbn_priority["year"] == selected_year)
+            & (lbn_priority["month"].str.lower() == selected_month.lower())
+        ].copy()
+
+        if filtered_priority.empty:
+            st.warning("No priority data available for the selected month and year.")
+            st.stop()
+
+        district_priority = (
+            filtered_priority.groupby("shapeName", as_index=False)
+            .agg({
+                "events": "sum",
+                "fatalities": "sum",
+                "road_access_penalty": "mean",
+                "health_access_penalty": "mean",
+                "priority_score": "mean",
+                "priority_rank": "min",
+            })
+        )
+
+        merged_priority = lbn_admin2.merge(
+            district_priority,
+            how="left",
+            on="shapeName",
+        )
+
+        merged_priority["events"] = pd.to_numeric(merged_priority["events"], errors="coerce").fillna(0)
+        merged_priority["fatalities"] = pd.to_numeric(merged_priority["fatalities"], errors="coerce").fillna(0)
+        merged_priority["road_access_penalty"] = pd.to_numeric(merged_priority["road_access_penalty"], errors="coerce").fillna(0)
+        merged_priority["health_access_penalty"] = pd.to_numeric(merged_priority["health_access_penalty"], errors="coerce").fillna(0)
+        merged_priority["priority_score"] = pd.to_numeric(merged_priority["priority_score"], errors="coerce").fillna(0)
+
+        merged_priority = repair_geometries(merged_priority)
+
+        top_row = (
+            merged_priority.sort_values("priority_score", ascending=False)
+            .head(1)
+        )
+
+        highest_district = top_row["shapeName"].iloc[0] if not top_row.empty else "-"
+        highest_score = float(top_row["priority_score"].iloc[0]) if not top_row.empty else 0.0
+        avg_score = float(merged_priority["priority_score"].mean()) if not merged_priority.empty else 0.0
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Highest priority district", highest_district)
+        c2.metric("Highest priority score", f"{highest_score:.3f}")
+        c3.metric("Average priority score", f"{avg_score:.3f}")
+
+        base_df = merged_priority.copy()
+        plot_df = merged_priority[merged_priority["priority_score"] > 0].copy()
+
+        real_max = float(plot_df["priority_score"].max()) if not plot_df.empty else 1.0
+        if real_max <= 0:
+            real_max = 1.0
+
+        minx, miny, maxx, maxy = lbn_admin2.total_bounds
+        pad_x = (maxx - minx) * 0.08
+        pad_y = (maxy - miny) * 0.08
+
+        fig_priority = go.Figure()
+
+        fig_priority.add_trace(
+            go.Choropleth(
+                geojson=json.loads(base_df.to_json()),
+                locations=base_df["shapeName"],
+                z=[0] * len(base_df),
+                featureidkey="properties.shapeName",
+                colorscale=[[0, "white"], [1, "white"]],
+                zmin=0,
+                zmax=1,
+                showscale=False,
+                marker_line_width=0,
+                marker_line_color="rgba(0,0,0,0)",
+                customdata=base_df[["events", "fatalities", "road_access_penalty", "health_access_penalty", "priority_score"]].values,
+                hovertemplate=(
+                    "<b>%{location}</b><br>"
+                    "events=%{customdata[0]:.0f}<br>"
+                    "fatalities=%{customdata[1]:.0f}<br>"
+                    "road penalty=%{customdata[2]:.2f}<br>"
+                    "health penalty=%{customdata[3]:.2f}<br>"
+                    "priority score=%{customdata[4]:.3f}<extra></extra>"
+                ),
+            )
+        )
+
+        if not plot_df.empty:
+            fig_priority.add_trace(
+                go.Choropleth(
+                    geojson=json.loads(plot_df.to_json()),
+                    locations=plot_df["shapeName"],
+                    z=plot_df["priority_score"],
+                    featureidkey="properties.shapeName",
+                    colorscale="OrRd",
+                    zmin=0,
+                    zmax=real_max,
+                    marker_line_width=0,
+                    marker_line_color="rgba(0,0,0,0)",
+                    colorbar=dict(title="Priority Score"),
+                    customdata=plot_df[["events", "fatalities", "road_access_penalty", "health_access_penalty", "priority_score"]].values,
+                    hovertemplate=(
+                        "<b>%{location}</b><br>"
+                        "events=%{customdata[0]:.0f}<br>"
+                        "fatalities=%{customdata[1]:.0f}<br>"
+                        "road penalty=%{customdata[2]:.2f}<br>"
+                        "health penalty=%{customdata[3]:.2f}<br>"
+                        "priority score=%{customdata[4]:.3f}<extra></extra>"
+                    ),
+                )
+            )
+
+        fig_priority.update_geos(
+            visible=False,
+            bgcolor="white",
+            showland=False,
+            showcountries=False,
+            showcoastlines=False,
+            showocean=False,
+            showlakes=False,
+            showrivers=False,
+            lonaxis_range=[minx - pad_x, maxx + pad_x],
+            lataxis_range=[miny - pad_y, maxy + pad_y],
+        )
+
+        fig_priority.update_layout(
+            title=f"Lebanon Priority Map ({selected_month} {selected_year})",
+            margin=dict(l=0, r=0, t=60, b=0),
+            height=700,
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+        )
+
+        add_district_boundaries(fig_priority, lbn_admin2)
+        add_country_outline(fig_priority, lbn_admin2)
+
+        st.plotly_chart(fig_priority, use_container_width=True)
+
+        st.subheader("Top 10 Lebanon districts by priority")
+        top_priority = (
+            merged_priority[["shapeName", "priority_score", "priority_rank"]]
+            .sort_values(["priority_score", "shapeName"], ascending=[False, True])
+            .head(10)
+            .reset_index(drop=True)
+        )
+        top_priority.index = top_priority.index + 1
+
+        priority_table = top_priority.rename(
+            columns={
+                "shapeName": "District",
+                "priority_score": "Priority Score",
+                "priority_rank": "Priority Rank",
+            }
+        )
+        st.dataframe(priority_table, use_container_width=True)
     if filtered_lbn.empty:
         district_values = pd.DataFrame(columns=["shapeName", "events", "fatalities"])
     else:
