@@ -182,6 +182,7 @@ def default_latest_period(df):
 
 def ensure_required_files():
     required_paths = [
+        priority_path,
         world_geojson_path,
         lbn_admin2_path,
         conflict_country_path,
@@ -239,7 +240,11 @@ def add_district_boundaries(fig, gdf):
 
 
 def add_country_outline(fig, gdf):
-    outline = gdf.union_all().boundary if hasattr(gdf, "union_all") else gdf.unary_union.boundary
+    outline = (
+        gdf.union_all().boundary
+        if hasattr(gdf, "union_all")
+        else gdf.unary_union.boundary
+    )
     add_line_geometry(fig, outline, color="black", width=2.2)
 
 
@@ -364,11 +369,11 @@ def load_lbn_admin2():
         gdf = gdf.to_crs(epsg=4326)
 
     gdf["shapeName"] = gdf["shapeName"].astype(str).str.strip()
-
     gdf = gdf[["shapeName", "geometry"]].copy()
     gdf = repair_geometries(gdf)
 
     return gdf
+
 
 @st.cache_data(show_spinner=False)
 def load_lbn_priority():
@@ -399,6 +404,8 @@ def load_lbn_priority():
     df["month_num"] = df["month_num"].astype(int)
 
     return df
+
+
 # ==================================================
 # LOAD EVERYTHING
 # ==================================================
@@ -597,10 +604,6 @@ if st.session_state["view"] == "world":
     )
     st.dataframe(top_table, use_container_width=True)
 
-    # if st.button("Open Lebanon view"):
-    #     st.session_state["view"] = "lebanon"
-    #     st.rerun()
-
 # ==================================================
 # LEBANON VIEW
 # ==================================================
@@ -798,7 +801,7 @@ else:
         add_district_boundaries(fig_lbn, lbn_admin2)
         add_country_outline(fig_lbn, lbn_admin2)
 
-        st.plotly_chart(fig_lbn, use_container_width=True)
+        st.plotly_chart(fig_lbn, use_container_width=True, key="lbn_conflict_chart")
 
         st.subheader(f"Top 10 Lebanon districts by {metric}")
         top_admin2 = (
@@ -969,7 +972,7 @@ else:
         add_district_boundaries(fig_priority, lbn_admin2)
         add_country_outline(fig_priority, lbn_admin2)
 
-        st.plotly_chart(fig_priority, use_container_width=True)
+        st.plotly_chart(fig_priority, use_container_width=True, key="lbn_priority_chart")
 
         st.subheader("Top 10 Lebanon districts by priority")
         top_priority = (
@@ -988,163 +991,3 @@ else:
             }
         )
         st.dataframe(priority_table, use_container_width=True)
-    if filtered_lbn.empty:
-        district_values = pd.DataFrame(columns=["shapeName", "events", "fatalities"])
-    else:
-        district_values = (
-            filtered_lbn.dropna(subset=["shapeName"])
-            .groupby("shapeName", as_index=False)
-            .agg({"events": "sum", "fatalities": "sum"})
-        )
-
-    merged_lbn = lbn_admin2.merge(
-        district_values,
-        how="left",
-        on="shapeName",
-    )
-
-    merged_lbn["events"] = pd.to_numeric(merged_lbn["events"], errors="coerce").fillna(0)
-    merged_lbn["fatalities"] = pd.to_numeric(merged_lbn["fatalities"], errors="coerce").fillna(0)
-
-    merged_lbn = repair_geometries(merged_lbn)
-
-    total_events = int(merged_lbn["events"].sum())
-    total_fatalities = int(merged_lbn["fatalities"].sum())
-    districts_with_data = int((merged_lbn[metric] > 0).sum())
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Lebanon events", f"{total_events:,}")
-    c2.metric("Lebanon fatalities", f"{total_fatalities:,}")
-    c3.metric("Districts with data", f"{districts_with_data:,}")
-
-    # Base layer: all districts, white fill, but still hoverable
-    base_df = merged_lbn.copy()
-
-    # Colored layer: only districts with real values > 0
-    plot_df = merged_lbn[merged_lbn[metric] > 0].copy()
-
-    color_scale = "YlOrRd" if metric == "events" else "Reds"
-    real_max = float(plot_df[metric].max()) if not plot_df.empty else 1.0
-    if real_max <= 0:
-        real_max = 1.0
-
-    minx, miny, maxx, maxy = lbn_admin2.total_bounds
-    pad_x = (maxx - minx) * 0.08
-    pad_y = (maxy - miny) * 0.08
-
-    fig_lbn = go.Figure()
-
-    # White hoverable base
-    fig_lbn.add_trace(
-        go.Choropleth(
-            geojson=json.loads(base_df.to_json()),
-            locations=base_df["shapeName"],
-            z=[0] * len(base_df),
-            featureidkey="properties.shapeName",
-            colorscale=[[0, "white"], [1, "white"]],
-            zmin=0,
-            zmax=1,
-            showscale=False,
-            marker_line_width=0,
-            marker_line_color="rgba(0,0,0,0)",
-            customdata=make_hover_customdata(base_df),
-            hovertemplate=(
-                "<b>%{location}</b><br>"
-                "events=%{customdata[0]:.0f}<br>"
-                "fatalities=%{customdata[1]:.0f}<extra></extra>"
-            ),
-        )
-    )
-
-    # Real colored layer
-    if not plot_df.empty:
-        fig_lbn.add_trace(
-            go.Choropleth(
-                geojson=json.loads(plot_df.to_json()),
-                locations=plot_df["shapeName"],
-                z=plot_df[metric],
-                featureidkey="properties.shapeName",
-                colorscale=color_scale,
-                zmin=0,
-                zmax=real_max,
-                marker_line_width=0,
-                marker_line_color="rgba(0,0,0,0)",
-                colorbar=dict(title=metric.capitalize()),
-                customdata=make_hover_customdata(plot_df),
-                hovertemplate=(
-                    "<b>%{location}</b><br>"
-                    "events=%{customdata[0]:.0f}<br>"
-                    "fatalities=%{customdata[1]:.0f}<extra></extra>"
-                ),
-            )
-        )
-
-    fig_lbn.update_geos(
-        visible=False,
-        bgcolor="white",
-        showland=False,
-        showcountries=False,
-        showcoastlines=False,
-        showocean=False,
-        showlakes=False,
-        showrivers=False,
-        lonaxis_range=[minx - pad_x, maxx + pad_x],
-        lataxis_range=[miny - pad_y, maxy + pad_y],
-    )
-
-    fig_lbn.update_layout(
-        title=f"Lebanon Districts - {metric.capitalize()} ({selected_month} {selected_year}) | {selected_event_type}",
-        margin=dict(l=0, r=0, t=60, b=0),
-        height=700,
-        paper_bgcolor="white",
-        plot_bgcolor="white",
-    )
-
-    # Borders on top
-    add_district_boundaries(fig_lbn, lbn_admin2)
-    add_country_outline(fig_lbn, lbn_admin2)
-
-    st.plotly_chart(fig_lbn, use_container_width=True)
-
-    st.subheader(f"Top 10 Lebanon districts by {metric}")
-    top_admin2 = (
-        merged_lbn[["shapeName", "events", "fatalities"]]
-        .sort_values(metric, ascending=False)
-        .head(10)
-        .reset_index(drop=True)
-    )
-    top_admin2.index = top_admin2.index + 1
-
-    district_table = top_admin2[["shapeName", metric]].rename(
-        columns={"shapeName": "District", metric: metric.capitalize()}
-    )
-    st.dataframe(district_table, use_container_width=True)
-
-    # with st.expander("Debug district matching"):
-    #     unmatched_data = sorted(
-    #         filtered_lbn.loc[filtered_lbn["shapeName"].isna(), "admin2"]
-    #         .dropna()
-    #         .astype(str)
-    #         .unique()
-    #         .tolist()
-    #     )
-
-        # geo_names = sorted(lbn_admin2["shapeName"].tolist())
-        # matched_names = sorted(
-        #     filtered_lbn["shapeName"].dropna().astype(str).unique().tolist()
-        # )
-
-        # st.write("GeoJSON districts:", geo_names)
-        # st.write("Matched names from conflict data:", matched_names)
-        # st.write("Unmatched names from conflict data:", unmatched_data)
-        # st.write("Real max used for color scale:", float(real_max))
-        # st.write("Duplicate shapeName in GeoJSON:", int(lbn_admin2["shapeName"].duplicated().sum()))
-        # st.write("Invalid geometries in GeoJSON:", int((~lbn_admin2.is_valid).sum()))
-
-    # with st.expander("Check district values on map"):
-    #     st.dataframe(
-    #         merged_lbn[["shapeName", "events", "fatalities"]]
-    #         .sort_values(metric, ascending=False)
-    #         .reset_index(drop=True),
-    #         use_container_width=True,
-    #     )
