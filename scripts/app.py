@@ -388,8 +388,9 @@ def load_lbn_priority():
 
     df["events"] = pd.to_numeric(df["events"], errors="coerce").fillna(0)
     df["fatalities"] = pd.to_numeric(df["fatalities"], errors="coerce").fillna(0)
-    df["road_access_penalty"] = pd.to_numeric(df["road_access_penalty"], errors="coerce").fillna(0)
-    df["health_access_penalty"] = pd.to_numeric(df["health_access_penalty"], errors="coerce").fillna(0)
+    df["health_access_penalty"] = pd.to_numeric(
+        df["health_access_penalty"], errors="coerce"
+    ).fillna(0)
     df["priority_score"] = pd.to_numeric(df["priority_score"], errors="coerce").fillna(0)
     df["priority_rank"] = pd.to_numeric(df["priority_rank"], errors="coerce")
 
@@ -820,7 +821,7 @@ else:
     # ==========================================
     # PRIORITY VIEW
     # ==========================================
-    else:
+    elif view_mode == "Priority View":
         lbn_years = sorted(lbn_priority["year"].unique().tolist())
         selected_year = st.sidebar.selectbox("Year", lbn_years)
 
@@ -835,7 +836,7 @@ else:
         selected_month = st.sidebar.selectbox("Month", month_list)
 
         st.title("Lebanon Priority Map")
-        st.caption(f"{selected_month} {selected_year} | Combined conflict + access score")
+        st.caption(f"{selected_month} {selected_year} | Combined conflict + health access score")
 
         filtered_priority = lbn_priority[
             (lbn_priority["year"] == selected_year)
@@ -851,7 +852,6 @@ else:
             .agg({
                 "events": "sum",
                 "fatalities": "sum",
-                "road_access_penalty": "mean",
                 "health_access_penalty": "mean",
                 "priority_score": "mean",
                 "priority_rank": "min",
@@ -866,16 +866,16 @@ else:
 
         merged_priority["events"] = pd.to_numeric(merged_priority["events"], errors="coerce").fillna(0)
         merged_priority["fatalities"] = pd.to_numeric(merged_priority["fatalities"], errors="coerce").fillna(0)
-        merged_priority["road_access_penalty"] = pd.to_numeric(merged_priority["road_access_penalty"], errors="coerce").fillna(0)
-        merged_priority["health_access_penalty"] = pd.to_numeric(merged_priority["health_access_penalty"], errors="coerce").fillna(0)
-        merged_priority["priority_score"] = pd.to_numeric(merged_priority["priority_score"], errors="coerce").fillna(0)
+        merged_priority["health_access_penalty"] = pd.to_numeric(
+            merged_priority["health_access_penalty"], errors="coerce"
+        ).fillna(0)
+        merged_priority["priority_score"] = pd.to_numeric(
+            merged_priority["priority_score"], errors="coerce"
+        ).fillna(0)
 
         merged_priority = repair_geometries(merged_priority)
 
-        top_row = (
-            merged_priority.sort_values("priority_score", ascending=False)
-            .head(1)
-        )
+        top_row = merged_priority.sort_values("priority_score", ascending=False).head(1)
 
         highest_district = top_row["shapeName"].iloc[0] if not top_row.empty else "-"
         highest_score = float(top_row["priority_score"].iloc[0]) if not top_row.empty else 0.0
@@ -911,14 +911,15 @@ else:
                 showscale=False,
                 marker_line_width=0,
                 marker_line_color="rgba(0,0,0,0)",
-                customdata=base_df[["events", "fatalities", "road_access_penalty", "health_access_penalty", "priority_score"]].values,
+                customdata=base_df[
+                    ["events", "fatalities", "health_access_penalty", "priority_score"]
+                ].values,
                 hovertemplate=(
                     "<b>%{location}</b><br>"
                     "events=%{customdata[0]:.0f}<br>"
                     "fatalities=%{customdata[1]:.0f}<br>"
-                    "road penalty=%{customdata[2]:.2f}<br>"
-                    "health penalty=%{customdata[3]:.2f}<br>"
-                    "priority score=%{customdata[4]:.3f}<extra></extra>"
+                    "health penalty=%{customdata[2]:.2f}<br>"
+                    "priority score=%{customdata[3]:.3f}<extra></extra>"
                 ),
             )
         )
@@ -936,14 +937,15 @@ else:
                     marker_line_width=0,
                     marker_line_color="rgba(0,0,0,0)",
                     colorbar=dict(title="Priority Score"),
-                    customdata=plot_df[["events", "fatalities", "road_access_penalty", "health_access_penalty", "priority_score"]].values,
+                    customdata=plot_df[
+                        ["events", "fatalities", "health_access_penalty", "priority_score"]
+                    ].values,
                     hovertemplate=(
                         "<b>%{location}</b><br>"
                         "events=%{customdata[0]:.0f}<br>"
                         "fatalities=%{customdata[1]:.0f}<br>"
-                        "road penalty=%{customdata[2]:.2f}<br>"
-                        "health penalty=%{customdata[3]:.2f}<br>"
-                        "priority score=%{customdata[4]:.3f}<extra></extra>"
+                        "health penalty=%{customdata[2]:.2f}<br>"
+                        "priority score=%{customdata[3]:.3f}<extra></extra>"
                     ),
                 )
             )
