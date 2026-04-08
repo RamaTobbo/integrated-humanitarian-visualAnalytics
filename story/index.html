@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>From Global Conflict Trends to Lebanon</title>
+
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Fixed visual stage -->
+  <div id="chart-stage">
+    <!-- Top title -->
+    <header id="story-header">
+      <p class="story-kicker">Conflict story</p>
+      <h1 id="story-main-title">From Global Conflict Trends to Lebanon</h1>
+      <p id="story-main-subtitle">
+        Each point is one month. Moving right means more fatalities. Moving up means more events.
+        The line shows how conflict intensity changes over time.
+      </p>
+    </header>
+
+    <!-- Main chart -->
+    <svg id="chart" aria-label="Scrollytelling chart"></svg>
+
+    <!-- Story text card over the chart -->
+    <aside id="story-card" aria-live="polite">
+      <p class="card-kicker" id="card-kicker">Introduction</p>
+      <h2 id="card-title">A global view of conflict</h2>
+      <p id="card-text">
+        This story begins with the worldwide monthly pattern of conflict, then narrows to Lebanon.
+      </p>
+    </aside>
+
+    <!-- Right-side chapter dots -->
+    <nav id="chapter-dots" aria-label="Story chapters"></nav>
+  </div>
+
+  <!-- Scroll steps -->
+  <main id="scrolly">
+    <section class="step" data-step="0" data-view="global_intro" aria-label="Global introduction"></section>
+    <section class="step" data-step="1" data-view="global_overview" aria-label="Global overview"></section>
+    <section class="step" data-step="2" data-view="global_escalation" aria-label="Global escalation"></section>
+    <section class="step" data-step="3" data-view="transition_lebanon" aria-label="Transition to Lebanon"></section>
+    <section class="step" data-step="4" data-view="lebanon_overview" aria-label="Lebanon overview"></section>
+    <section class="step" data-step="5" data-view="lebanon_focus" aria-label="Lebanon focus"></section>
+  </main>
+
+  <!-- Data paths available to script.js -->
+  <script>
+    window.STORY_FILES = {
+      global: "data/global_story_monthly.csv",
+      country: "data/conflict_country_monthly.csv"
+    };
+  </script>
+
+  <script src="script.js"></script>
+</body>
+</html>

@@ -473,10 +473,10 @@ if st.session_state["view"] == "world":
     st.title("Global Conflict Overview" if selected_country == "All" else f"{selected_country} Conflict Overview")
     st.caption(f"{selected_month} {selected_year} | Event Type: {selected_event_type}")
 
-    if selected_country == "All":
-        st.info("Click Lebanon on the world map to open the Lebanon admin1 view.")
-    else:
-        st.info("The map zooms to the selected country.")
+    # if selected_country == "All":
+    #     st.info("Click Lebanon on the world map to open the Lebanon view.")
+    # else:
+    #     st.info("The map zooms to the selected country.")
 
     if filtered_world.empty:
         st.warning("No data available for the selected filters.")
