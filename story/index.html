@@ -3,58 +3,1349 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>From Global Conflict Trends to Lebanon</title>
+  <title>From Global Conflict Trends to Aid Priority in Lebanon</title>
 
   <script src="https://d3js.org/d3.v7.min.js"></script>
-  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+
+  <style>
+    :root {
+      --bg: #f5f1ed;
+      --text: #2d2a26;
+      --muted: #7e756d;
+      --accent: #c96a49;
+      --card: rgba(255, 255, 255, 0.84);
+      --border: rgba(70, 60, 50, 0.08);
+      --shadow: 0 12px 28px rgba(35, 28, 24, 0.06);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Georgia, "Times New Roman", serif;
+      scroll-behavior: smooth;
+    }
+
+    body {
+      overflow-x: hidden;
+    }
+
+    .loading {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      background: var(--bg);
+      color: var(--text);
+      z-index: 100;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 16px;
+    }
+
+    .story-shell {
+      display: grid;
+      grid-template-columns: 16vw minmax(0, 84vw);
+      width: min(1600px, 100%);
+      margin: 0 auto;
+      min-height: 100vh;
+    }
+
+    .scroll-column {
+      position: relative;
+      z-index: 1;
+    }
+
+    .step {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 80px 20px;
+    }
+
+    .step-anchor {
+      width: 100%;
+      max-width: 260px;
+      min-height: 180px;
+      opacity: 0.03;
+      border-radius: 20px;
+      background: transparent;
+    }
+
+    .vis-column {
+      position: relative;
+      min-height: 100vh;
+    }
+
+    .sticky-stage {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 16px;
+      padding: 16px 18px 18px 0;
+    }
+
+    .stage-header {
+      width: min(980px, 96%);
+      margin: 0 auto;
+      text-align: center;
+      padding-top: 4px;
+    }
+
+    .eyebrow {
+      font-family: Arial, Helvetica, sans-serif;
+      letter-spacing: 1.8px;
+      text-transform: uppercase;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .stage-header h1 {
+      margin: 0;
+      font-size: clamp(34px, 4vw, 64px);
+      line-height: 0.96;
+      font-weight: 700;
+      letter-spacing: -0.8px;
+    }
+
+    .stage-header p {
+      margin: 12px auto 0;
+      max-width: 850px;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #4f4944;
+      font-size: clamp(15px, 1.1vw, 20px);
+      line-height: 1.45;
+    }
+
+    .content-row {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 22px;
+      align-items: stretch;
+    }
+
+    .chart-panel {
+      position: relative;
+      min-height: 0;
+    }
+
+    #chart {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .story-card {
+      align-self: end;
+   
+    
+     
+   
+      backdrop-filter: blur(6px);
+    }
+
+    .story-card .chapter-label {
+      font-family: Arial, Helvetica, sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 1.4px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    .story-card h2 {
+      margin: 0 0 12px;
+      font-size: clamp(24px, 2vw, 40px);
+      line-height: 1.04;
+    }
+
+    .story-card p {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.6;
+      color: #554f49;
+    }
+
+    .dot-nav {
+      position: fixed;
+      right: 18px;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 30;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .dot {
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      border: 1.5px solid #b8afa7;
+      background: rgba(255, 255, 255, 0.65);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .dot.active {
+      background: #111;
+      border-color: #111;
+      transform: scale(1.03);
+    }
+
+    @media (max-width: 1180px) {
+      .story-shell {
+        grid-template-columns: 1fr;
+      }
+
+      .scroll-column {
+        display: none;
+      }
+
+      .sticky-stage {
+        position: relative;
+        height: auto;
+        min-height: 100vh;
+        padding: 16px;
+      }
+
+      .content-row {
+        grid-template-columns: 1fr;
+      }
+
+      .chart-panel {
+        height: 72vh;
+        min-height: 520px;
+      }
+
+      .story-card {
+        margin-top: 10px;
+      }
+
+      .dot-nav {
+        right: 12px;
+      }
+
+      .stage-header h1 {
+        font-size: clamp(30px, 8vw, 52px);
+      }
+    }
+  </style>
 </head>
 <body>
-  <!-- Fixed visual stage -->
-  <div id="chart-stage">
-    <!-- Top title -->
-    <header id="story-header">
-      <p class="story-kicker">Conflict story</p>
-      <h1 id="story-main-title">From Global Conflict Trends to Lebanon</h1>
-      <p id="story-main-subtitle">
-        Each point is one month. Moving right means more fatalities. Moving up means more events.
-        The line shows how conflict intensity changes over time.
-      </p>
-    </header>
+  <div class="loading" id="loading">Loading story...</div>
 
-    <!-- Main chart -->
-    <svg id="chart" aria-label="Scrollytelling chart"></svg>
+  <div class="dot-nav" id="dotNav"></div>
 
-    <!-- Story text card over the chart -->
-    <aside id="story-card" aria-live="polite">
-      <p class="card-kicker" id="card-kicker">Introduction</p>
-      <h2 id="card-title">A global view of conflict</h2>
-      <p id="card-text">
-        This story begins with the worldwide monthly pattern of conflict, then narrows to Lebanon.
-      </p>
-    </aside>
+  <main class="story-shell">
+    <section class="scroll-column" id="scrollColumn"></section>
 
-    <!-- Right-side chapter dots -->
-    <nav id="chapter-dots" aria-label="Story chapters"></nav>
-  </div>
+    <section class="vis-column">
+      <div class="sticky-stage">
+        <header class="stage-header">
+          <div class="eyebrow">Conflict Story</div>
+          <h1>From Global Conflict Trends to Aid Priority in Lebanon</h1>
+          <p id="subtitle">
+            A visual story of how global conflict patterns narrow into local humanitarian decisions in Lebanon.
+          </p>
+        </header>
 
-  <!-- Scroll steps -->
-  <main id="scrolly">
-    <section class="step" data-step="0" data-view="global_intro" aria-label="Global introduction"></section>
-    <section class="step" data-step="1" data-view="global_overview" aria-label="Global overview"></section>
-    <section class="step" data-step="2" data-view="global_escalation" aria-label="Global escalation"></section>
-    <section class="step" data-step="3" data-view="transition_lebanon" aria-label="Transition to Lebanon"></section>
-    <section class="step" data-step="4" data-view="lebanon_overview" aria-label="Lebanon overview"></section>
-    <section class="step" data-step="5" data-view="lebanon_focus" aria-label="Lebanon focus"></section>
+        <div class="content-row">
+          <div class="chart-panel">
+            <div id="chart"></div>
+          </div>
+
+          <aside class="story-card">
+            <div class="chapter-label" id="cardChapter">Chapter 1</div>
+            <h2 id="cardTitle">A world shaped by conflict</h2>
+            <p id="cardText"></p>
+          </aside>
+        </div>
+      </div>
+    </section>
   </main>
 
-  <!-- Data paths available to script.js -->
   <script>
-    window.STORY_FILES = {
-      global: "data/global_story_monthly.csv",
-      country: "data/conflict_country_monthly.csv"
-    };
-  </script>
+    // =========================
+    // FILE PATHS
+    // =========================
+    const WORLD_MONTHLY_CSV_PATHS = [
+      "./data/global_story_monthly.csv",
+      "./data/conflict_country_monthly.csv"
+    ];
 
-  <script src="script.js"></script>
+    const WORLD_COUNTRY_CSV_PATHS = [
+      "./data/conflict_country_monthly.csv"
+    ];
+
+    const LEBANON_CSV_PATHS = [
+      "./data/lebanon_priority_admin1_enhanced1.csv"
+    ];
+
+    // =========================
+    // STORY CHAPTERS
+    // =========================
+    const chapters = [
+      {
+        label: "Chapter 1",
+        title: "A world shaped by conflict",
+        subtitle:
+          "Conflict is a global problem, but it is not distributed equally across countries and months.",
+        text:
+          "The story begins with the broader global picture. Conflict affects many parts of the world, yet its intensity is uneven. Some periods and places experience sharper rises in events and fatalities, showing why a single broad view is only the first step."
+      },
+      {
+        label: "Chapter 2",
+        title: "Why the global view is only the beginning",
+        subtitle:
+          "A global view reveals scale, but it does not fully explain local humanitarian urgency.",
+        text:
+          "Looking at the latest month worldwide helps identify where conflict is concentrated, but conflict counts alone do not tell us where aid should go first. Humanitarian priority depends on more than how many incidents happened."
+      },
+      {
+        label: "Chapter 3",
+        title: "Zooming into Lebanon",
+        subtitle:
+          "Lebanon turns the broad story into a more concrete monthly pattern.",
+        text:
+          "At the national level, month-to-month movement becomes clearer. This makes it easier to see when violence intensifies, when fatalities rise, and how the conflict pattern changes over time."
+      },
+      {
+        label: "Chapter 4",
+        title: "Different regions, different realities",
+        subtitle:
+          "Lebanon should not be read as a single unit because governorates experience conflict differently.",
+        text:
+          "Even within one country, pressure is uneven. Some governorates record higher event counts than others, which means local analysis is essential before moving toward any aid prioritization."
+      },
+      {
+        label: "Chapter 5",
+        title: "Conflict alone is not enough",
+        subtitle:
+          "Humanitarian urgency must consider both danger and the ability to reach support.",
+        text:
+          "To move from conflict monitoring to decision support, the story must include access risk and demographic vulnerability. Some areas may face higher priority not only because of conflict intensity, but also because services are harder to reach and vulnerable groups are more exposed."
+      },
+      {
+        label: "Chapter 6",
+        title: "From conflict to priority",
+        subtitle:
+          "A priority score combines conflict, access, and vulnerability into one view.",
+        text:
+          "This project goes beyond showing where violence happened. It highlights which governorates may need assistance first when conflict score, access risk, and demographic vulnerability overlap."
+      },
+      {
+        label: "Chapter 7",
+        title: "Priority changes over time",
+        subtitle:
+          "Aid priority is dynamic, not fixed.",
+        text:
+          "The areas most in need can change from month to month. By tracking priority over time, the visualization supports a more flexible response that reflects changing conditions rather than a single static ranking."
+      },
+      {
+        label: "Chapter 8",
+        title: "Why this matters",
+        subtitle:
+          "The goal is not only to describe conflict, but to support clearer humanitarian decisions.",
+        text:
+          "When resources are limited, aid cannot go everywhere at once. A transparent visual approach that connects conflict, access, and vulnerability can help decision-makers identify where support may be most urgent and why."
+      },
+      {
+  label: "Chapter 9",
+  title: "Continue to dashboard",
+  subtitle:
+    "The story ends here. Open the dashboard to explore the data interactively.",
+  text:
+    "You can now move from the guided story to the full dashboard and explore filters, time, and regions in more detail."
+}
+    ];
+
+    // =========================
+    // STATE
+    // =========================
+    let worldMonthlyData = [];
+    let worldCountryData = [];
+    let lebanonData = [];
+    let activeChapter = 0;
+    const DASHBOARD_URL = "http://localhost:8501";
+
+    // =========================
+    // HELPERS
+    // =========================
+    async function loadCsvWithFallback(paths) {
+      for (const path of paths) {
+        try {
+          const res = await fetch(path + "?t=" + Date.now());
+          if (res.ok) {
+            const text = await res.text();
+            return d3.csvParse(text, d3.autoType);
+          }
+        } catch (err) {}
+      }
+      return [];
+    }
+  function renderDashboardIntro() {
+  const html = `
+    <div style="
+      width:100%;
+      height:100%;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:#f5f1ed;
+    ">
+      <div style="
+        width:100%;
+        max-width:900px;
+        margin:0 0 0 250px;
+        padding:40px 24px 40px 24px;
+        text-align:center;
+        display:flex;
+        flex-direction:column;
+        align-items:center;
+        justify-content:center;
+      ">
+        <div style="
+          font-family:Arial, sans-serif;
+          font-size:12px;
+          letter-spacing:1.8px;
+          text-transform:uppercase;
+          color:#7e756d;
+          margin-bottom:14px;
+        ">Next Step</div>
+
+        <h2 style="
+          margin:0 0 18px;
+          font-family:Georgia, 'Times New Roman', serif;
+          font-size:72px;
+          line-height:0.98;
+          color:#2d2a26;
+          text-align:center;
+        ">Go to dashboard</h2>
+
+        <p style="
+          margin:0 0 34px;
+          max-width:820px;
+          font-family:Arial, sans-serif;
+          font-size:18px;
+          line-height:1.65;
+          color:#554f49;
+          text-align:center;
+        ">
+          The story gave a guided overview. The dashboard lets you explore the data interactively.
+        </p>
+
+        <a href="${DASHBOARD_URL}" style="
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+          padding:18px 42px;
+          border-radius:999px;
+          background:#c96a49;
+          color:white;
+          text-decoration:none;
+          font-family:Arial, sans-serif;
+          font-size:18px;
+          font-weight:600;
+          box-shadow:0 8px 18px rgba(35,28,24,0.10);
+        ">
+          Open dashboard
+        </a>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("chart").innerHTML = html;
+}
+
+    function monthNameToNum(value) {
+      if (value === null || value === undefined) return null;
+      if (typeof value === "number" && !Number.isNaN(value)) return value;
+
+      const str = String(value).trim().toLowerCase();
+      const map = {
+        january: 1, jan: 1,
+        february: 2, feb: 2,
+        march: 3, mar: 3,
+        april: 4, apr: 4,
+        may: 5,
+        june: 6, jun: 6,
+        july: 7, jul: 7,
+        august: 8, aug: 8,
+        september: 9, sep: 9, sept: 9,
+        october: 10, oct: 10,
+        november: 11, nov: 11,
+        december: 12, dec: 12
+      };
+
+      if (map[str]) return map[str];
+
+      const numeric = +str;
+      return Number.isFinite(numeric) ? numeric : null;
+    }
+
+    function formatMonthYear(year, monthNum) {
+      const date = new Date(year, monthNum - 1, 1);
+      return date.toLocaleString("en-US", {
+        month: "long",
+        year: "numeric"
+      });
+    }
+
+    function getWorldMonthNum(d) {
+      return monthNameToNum(d.month_num ?? d.month ?? d.month_name);
+    }
+
+    function getWorldYear(d) {
+      return +d.year;
+    }
+
+    function getLebMonthNum(d) {
+      return monthNameToNum(d.month_num ?? d.month);
+    }
+
+    function makeKey(year, monthNum) {
+      return `${year}-${String(monthNum).padStart(2, "0")}`;
+    }
+
+    function latestKeyFromRows(rows, yearAccessor, monthAccessor) {
+      const keys = rows
+        .map(d => ({
+          key: makeKey(yearAccessor(d), monthAccessor(d)),
+          year: yearAccessor(d),
+          month: monthAccessor(d)
+        }))
+        .filter(d => d.year && d.month)
+        .sort((a, b) => d3.ascending(a.key, b.key));
+
+      return keys.length ? keys[keys.length - 1] : null;
+    }
+
+    function sum(arr, field) {
+      return d3.sum(arr, d => +d[field] || 0);
+    }
+
+    function mean(arr, field) {
+      return d3.mean(arr, d => +d[field] || 0) || 0;
+    }
+
+    function niceAreaName(value) {
+      if (!value) return "Unknown";
+      return String(value)
+        .replaceAll("_", " ")
+        .replace(/\b\w/g, c => c.toUpperCase());
+    }
+
+    function getCountryName(d) {
+      return d.country || d.admin0 || d.name || null;
+    }
+
+    function baseLayout(titleText, xTitle, yTitle) {
+      return {
+        title: {
+          text: titleText || "",
+          x: 0,
+          y: 0.98,
+          xanchor: "left",
+          font: {
+            family: "Arial, sans-serif",
+            size: 15,
+            color: "#6f655d"
+          }
+        },
+        paper_bgcolor: "#f5f1ed",
+        plot_bgcolor: "#f5f1ed",
+        margin: { l: 90, r: 50, t: 56, b: 95 },
+        font: {
+          family: "Arial, sans-serif",
+          color: "#5d5650",
+          size: 13
+        },
+        xaxis: {
+          title: xTitle,
+          gridcolor: "rgba(90,80,70,0.10)",
+          zeroline: false,
+          automargin: true
+        },
+        yaxis: {
+          title: yTitle,
+          gridcolor: "rgba(90,80,70,0.10)",
+          zeroline: false,
+          automargin: true
+        },
+        hoverlabel: {
+          bgcolor: "#ffffff",
+          bordercolor: "#d9c9bf",
+          font: {
+            family: "Arial, sans-serif",
+            size: 13,
+            color: "#3d3834"
+          }
+        },
+        legend: {
+          orientation: "h",
+          yanchor: "top",
+          y: -0.28,
+          xanchor: "left",
+          x: 0,
+          font: { size: 12 }
+        }
+      };
+    }
+
+    function showFallbackMessage(message) {
+      const layout = {
+        paper_bgcolor: "#f5f1ed",
+        plot_bgcolor: "#f5f1ed",
+        margin: { l: 40, r: 40, t: 80, b: 40 },
+        xaxis: { visible: false },
+        yaxis: { visible: false },
+        annotations: [{
+          text: message,
+          x: 0.5,
+          y: 0.5,
+          xref: "paper",
+          yref: "paper",
+          showarrow: false,
+          font: {
+            family: "Arial, sans-serif",
+            size: 18,
+            color: "#625b55"
+          },
+          align: "center"
+        }]
+      };
+      Plotly.newPlot("chart", [], layout, {
+        responsive: true,
+        displayModeBar: false
+      });
+    }
+
+    // =========================
+    // DATA PREP
+    // =========================
+    function getWorldMonthlyTotals() {
+      if (!worldMonthlyData.length) return [];
+
+      const grouped = d3.rollups(
+        worldMonthlyData,
+        values => ({
+          year: getWorldYear(values[0]),
+          month: getWorldMonthNum(values[0]),
+          events: sum(values, "events"),
+          fatalities: sum(values, "fatalities")
+        }),
+        d => makeKey(getWorldYear(d), getWorldMonthNum(d))
+      );
+
+      return grouped
+        .map(([, v]) => ({
+          ...v,
+          label: formatMonthYear(v.year, v.month)
+        }))
+        .sort((a, b) => d3.ascending(makeKey(a.year, a.month), makeKey(b.year, b.month)));
+    }
+
+    function getWorldTopCountriesLatestMonth() {
+      if (!worldCountryData.length) return { rows: [], label: "" };
+
+      const latest = latestKeyFromRows(worldCountryData, getWorldYear, getWorldMonthNum);
+      if (!latest) return { rows: [], label: "" };
+
+      const rows = worldCountryData
+        .filter(d => getWorldYear(d) === latest.year && getWorldMonthNum(d) === latest.month)
+        .map(d => ({
+          country: getCountryName(d),
+          events: +d.events || 0,
+          fatalities: +d.fatalities || 0
+        }))
+        .filter(d => d.country)
+        .sort((a, b) => d3.descending(a.events, b.events))
+        .slice(0, 10);
+
+      return {
+        rows,
+        label: formatMonthYear(latest.year, latest.month)
+      };
+    }
+
+    function getLebanonMonthlyTotals() {
+      if (!lebanonData.length) return [];
+
+      const grouped = d3.rollups(
+        lebanonData,
+        values => ({
+          year: +values[0].year,
+          month: getLebMonthNum(values[0]),
+          events: sum(values, "events"),
+          fatalities: sum(values, "fatalities"),
+          avgPriority: mean(values, "priority_score")
+        }),
+        d => makeKey(+d.year, getLebMonthNum(d))
+      );
+
+      return grouped
+        .map(([, v]) => ({
+          ...v,
+          label: formatMonthYear(v.year, v.month)
+        }))
+        .sort((a, b) => d3.ascending(makeKey(a.year, a.month), makeKey(b.year, b.month)));
+    }
+
+    function getLebanonLatestMonthRows() {
+      if (!lebanonData.length) return { rows: [], label: "" };
+
+      const latest = latestKeyFromRows(lebanonData, d => +d.year, getLebMonthNum);
+      if (!latest) return { rows: [], label: "" };
+
+      const rows = lebanonData
+        .filter(d => +d.year === latest.year && getLebMonthNum(d) === latest.month)
+        .map(d => ({
+          area_name: d.admin1_norm,
+          year: +d.year,
+          month: getLebMonthNum(d),
+          events: +d.events || 0,
+          fatalities: +d.fatalities || 0,
+          conflict_score: +d.conflict_score || 0,
+          access_risk: +d.access_risk || 0,
+          demographic_vulnerability: +d.demographic_vulnerability || 0,
+          priority_score: +d.priority_score || 0,
+          priority_rank: +d.priority_rank || 0
+        }))
+        .filter(d => d.area_name);
+
+      return {
+        rows,
+        label: formatMonthYear(latest.year, latest.month)
+      };
+    }
+
+    function getTopPriorityTrend() {
+      if (!lebanonData.length) return [];
+
+      const avgByArea = d3.rollups(
+        lebanonData,
+        values => ({
+          area_name: values[0].admin1_norm,
+          avgPriority: mean(values, "priority_score")
+        }),
+        d => d.admin1_norm
+      )
+      .map(([, v]) => v)
+      .filter(d => d.area_name)
+      .sort((a, b) => d3.descending(a.avgPriority, b.avgPriority))
+      .slice(0, 4);
+
+      const topAreas = new Set(avgByArea.map(d => d.area_name));
+
+      const grouped = d3.rollups(
+        lebanonData.filter(d => topAreas.has(d.admin1_norm)),
+        values => ({
+          area_name: values[0].admin1_norm,
+          year: +values[0].year,
+          month: getLebMonthNum(values[0]),
+          priority_score: mean(values, "priority_score")
+        }),
+        d => d.admin1_norm,
+        d => makeKey(+d.year, getLebMonthNum(d))
+      );
+
+      const rows = [];
+      grouped.forEach(([area_name, inner]) => {
+        inner.forEach(([, v]) => {
+          rows.push({
+            area_name,
+            year: v.year,
+            month: v.month,
+            label: formatMonthYear(v.year, v.month),
+            priority_score: v.priority_score
+          });
+        });
+      });
+
+      return rows.sort((a, b) => d3.ascending(makeKey(a.year, a.month), makeKey(b.year, b.month)));
+    }
+
+    // =========================
+    // CHARTS
+    // =========================
+    function renderWorldScatter() {
+      const rows = getWorldMonthlyTotals();
+      if (!rows.length) {
+        showFallbackMessage("World monthly file was not found.");
+        return;
+      }
+
+      const peak = rows.reduce((a, b) => (b.events > a.events ? b : a));
+      const latest = rows[rows.length - 1];
+
+      const trace = {
+        type: "scatter",
+        mode: "lines+markers",
+        x: rows.map(d => d.fatalities),
+        y: rows.map(d => d.events),
+        customdata: rows.map(d => [d.label, d.events, d.fatalities]),
+        marker: {
+          size: 8,
+          color: "#c96a49",
+          line: { color: "#c96a49", width: 1 }
+        },
+        line: {
+          color: "#c96a49",
+          width: 3
+        },
+        hovertemplate:
+          "<b>%{customdata[0]}</b><br>" +
+          "Events: %{customdata[1]:,.0f}<br>" +
+          "Fatalities: %{customdata[2]:,.0f}<extra></extra>",
+        showlegend: false
+      };
+
+      const layout = baseLayout("Global monthly pattern", "Fatalities", "Events");
+
+      layout.annotations = [
+        {
+          x: peak.fatalities,
+          y: peak.events,
+          text: `Highest events: ${peak.label}`,
+          showarrow: false,
+          xanchor: "left",
+          yanchor: "bottom",
+          font: { size: 13, color: "#4a4440" },
+          bgcolor: "rgba(245,241,237,0.9)"
+        },
+        {
+          x: latest.fatalities,
+          y: latest.events,
+          text: `Latest: ${latest.label}`,
+          showarrow: false,
+          xanchor: "left",
+          yanchor: "top",
+          font: { size: 13, color: "#4a4440" },
+          bgcolor: "rgba(245,241,237,0.9)"
+        }
+      ];
+
+      Plotly.newPlot("chart", [trace], layout, {
+        responsive: true,
+        displayModeBar: false
+      });
+    }
+
+    function renderTopCountriesBar() {
+      const data = getWorldTopCountriesLatestMonth();
+      if (!data.rows.length) {
+        showFallbackMessage("No latest-month country breakdown was found.");
+        return;
+      }
+
+      const rows = [...data.rows].reverse();
+
+      const trace = {
+        type: "bar",
+        orientation: "h",
+        x: rows.map(d => d.events),
+        y: rows.map(d => d.country),
+        text: rows.map(d => d.events.toLocaleString()),
+        textposition: "outside",
+        cliponaxis: false,
+        marker: { color: "#c96a49" },
+        hovertemplate:
+          "<b>%{y}</b><br>Events: %{x:,.0f}<extra></extra>",
+        showlegend: false
+      };
+
+      const layout = baseLayout(
+        `Countries with the highest event counts `,
+        "Events",
+        ""
+      );
+
+      layout.margin.l = 160;
+      layout.margin.r = 90;
+
+      Plotly.newPlot("chart", [trace], layout, {
+        responsive: true,
+        displayModeBar: false
+      });
+    }
+
+    function renderLebanonScatter() {
+      const rows = getLebanonMonthlyTotals();
+      if (!rows.length) {
+        showFallbackMessage("Lebanon priority dataset was not found.");
+        return;
+      }
+
+      const peak = rows.reduce((a, b) => (b.events > a.events ? b : a));
+      const latest = rows[rows.length - 1];
+
+      const trace = {
+        type: "scatter",
+        mode: "lines+markers",
+        x: rows.map(d => d.fatalities),
+        y: rows.map(d => d.events),
+        customdata: rows.map(d => [d.label, d.events, d.fatalities]),
+        marker: {
+          size: 8,
+          color: "#c96a49"
+        },
+        line: {
+          color: "#c96a49",
+          width: 3
+        },
+        hovertemplate:
+          "<b>%{customdata[0]}</b><br>" +
+          "Events: %{customdata[1]:,.0f}<br>" +
+          "Fatalities: %{customdata[2]:,.0f}<extra></extra>",
+        showlegend: false
+      };
+
+      const layout = baseLayout("Lebanon monthly conflict pattern", "Fatalities", "Events");
+
+      layout.annotations = [
+        {
+          x: peak.fatalities,
+          y: peak.events,
+          text: `Highest events: ${peak.label}`,
+          showarrow: false,
+          xanchor: "left",
+          yanchor: "bottom",
+          font: { size: 13, color: "#4a4440" },
+          bgcolor: "rgba(245,241,237,0.9)"
+        },
+        {
+          x: latest.fatalities,
+          y: latest.events,
+          text: `Latest: ${latest.label}`,
+          showarrow: false,
+          xanchor: "left",
+          yanchor: "top",
+          font: { size: 13, color: "#4a4440" },
+          bgcolor: "rgba(245,241,237,0.9)"
+        }
+      ];
+
+      Plotly.newPlot("chart", [trace], layout, {
+        responsive: true,
+        displayModeBar: false
+      });
+    }
+
+    function renderAreaConflictBar() {
+      const data = getLebanonLatestMonthRows();
+      if (!data.rows.length) {
+        showFallbackMessage("No Lebanon rows were found.");
+        return;
+      }
+
+      const rows = [...data.rows]
+        .sort((a, b) => d3.descending(a.events, b.events))
+        .slice(0, 8)
+        .reverse();
+
+      const trace = {
+        type: "bar",
+        orientation: "h",
+        x: rows.map(d => d.events),
+        y: rows.map(d => niceAreaName(d.area_name)),
+        marker: { color: "#c96a49" },
+        text: rows.map(d => d.events.toLocaleString()),
+        textposition: "outside",
+        cliponaxis: false,
+        hovertemplate:
+          "<b>%{y}</b><br>Events: %{x:,.0f}<extra></extra>",
+        showlegend: false
+      };
+
+      const layout = baseLayout(
+        `Governorates with the highest event counts (${data.label})`,
+        "Events",
+        ""
+      );
+
+      layout.margin.l = 210;
+      layout.margin.r = 90;
+
+      Plotly.newPlot("chart", [trace], layout, {
+        responsive: true,
+        displayModeBar: false
+      });
+    }
+
+    function renderComponentsBar() {
+      const data = getLebanonLatestMonthRows();
+      if (!data.rows.length) {
+        showFallbackMessage("No priority components were found for Lebanon.");
+        return;
+      }
+
+      const rows = [...data.rows]
+        .sort((a, b) => d3.descending(a.priority_score, b.priority_score))
+        .slice(0, 6)
+        .reverse();
+
+      const yLabels = rows.map(d => niceAreaName(d.area_name));
+
+      const traces = [
+        {
+          type: "bar",
+          orientation: "h",
+          x: rows.map(d => d.conflict_score),
+          y: yLabels,
+          name: "Conflict score",
+          marker: { color: "#c96a49" }
+        },
+        {
+          type: "bar",
+          orientation: "h",
+          x: rows.map(d => d.access_risk),
+          y: yLabels,
+          name: "Access risk",
+          marker: { color: "#d99a83" }
+        },
+        {
+          type: "bar",
+          orientation: "h",
+          x: rows.map(d => d.demographic_vulnerability),
+          y: yLabels,
+          name: "Vulnerability",
+          marker: { color: "#8d6a5c" }
+        }
+      ];
+
+      const layout = baseLayout(
+        `What shapes priority in each governorate (${data.label})`,
+        "Normalized score",
+        ""
+      );
+
+      layout.barmode = "group";
+      layout.margin.l = 210;
+      layout.margin.b = 110;
+
+      Plotly.newPlot("chart", traces, layout, {
+        responsive: true,
+        displayModeBar: false
+      });
+    }
+
+    function renderPriorityRanking() {
+      const data = getLebanonLatestMonthRows();
+      if (!data.rows.length) {
+        showFallbackMessage("No priority scores were found.");
+        return;
+      }
+
+      const rows = [...data.rows]
+        .sort((a, b) => d3.descending(a.priority_score, b.priority_score))
+        .slice(0, 6)
+        .reverse();
+
+      const trace = {
+        type: "bar",
+        orientation: "h",
+        x: rows.map(d => d.priority_score),
+        y: rows.map(d => niceAreaName(d.area_name)),
+        marker: { color: "#c96a49" },
+        text: rows.map(d => `#${d.priority_rank}`),
+        textposition: "outside",
+        cliponaxis: false,
+        hovertemplate:
+          "<b>%{y}</b><br>" +
+          "Priority score: %{x:.3f}<extra></extra>",
+        showlegend: false
+      };
+
+      const layout = baseLayout(
+        `Aid priority ranking by governorate (${data.label})`,
+        "Priority score",
+        ""
+      );
+
+      layout.margin.l = 210;
+      layout.margin.r = 90;
+
+      Plotly.newPlot("chart", [trace], layout, {
+        responsive: true,
+        displayModeBar: false
+      });
+    }
+
+    function renderPriorityTrend() {
+      const rows = getTopPriorityTrend();
+      if (!rows.length) {
+        showFallbackMessage("No priority trend could be calculated.");
+        return;
+      }
+
+      const areas = Array.from(new Set(rows.map(d => d.area_name)));
+      const palette = ["#c96a49", "#8d6a5c", "#d99a83", "#b57b66"];
+
+      const traces = areas.map((area, i) => {
+        const areaRows = rows.filter(d => d.area_name === area);
+
+        return {
+          type: "scatter",
+          mode: "lines+markers",
+          x: areaRows.map(d => d.label),
+          y: areaRows.map(d => d.priority_score),
+          name: niceAreaName(area),
+          line: {
+            width: 3,
+            color: palette[i % palette.length]
+          },
+          marker: {
+            size: 7,
+            color: palette[i % palette.length]
+          },
+          hovertemplate:
+            "<b>" + niceAreaName(area) + "</b><br>" +
+            "%{x}<br>" +
+            "Priority score: %{y:.3f}<extra></extra>"
+        };
+      });
+
+      const layout = baseLayout(
+        "How priority changes over time in the highest-priority governorates",
+        "Month",
+        "Priority score"
+      );
+
+      layout.xaxis.tickangle = -32;
+      layout.margin.b = 120;
+
+      Plotly.newPlot("chart", traces, layout, {
+        responsive: true,
+        displayModeBar: false
+      });
+    }
+
+    function renderPriorityScatter() {
+      const data = getLebanonLatestMonthRows();
+      if (!data.rows.length) {
+        showFallbackMessage("No latest Lebanon priority rows were found.");
+        return;
+      }
+
+      const rows = [...data.rows]
+        .sort((a, b) => d3.descending(a.priority_score, b.priority_score))
+        .slice(0, 8);
+
+      const trace = {
+        type: "scatter",
+        mode: "markers+text",
+        x: rows.map(d => d.access_risk),
+        y: rows.map(d => d.conflict_score),
+        text: rows.map((d, i) => i < 4 ? niceAreaName(d.area_name) : ""),
+        textposition: "top center",
+        marker: {
+          size: rows.map(d => 16 + d.demographic_vulnerability * 34),
+          color: rows.map(d => d.priority_score),
+          colorscale: [
+            [0, "#f0d8cf"],
+            [0.5, "#d99a83"],
+            [1, "#c96a49"]
+          ],
+          line: {
+            color: "#8e6a5c",
+            width: 1
+          },
+          colorbar: {
+            title: "Priority",
+            thickness: 14,
+            outlinewidth: 0
+          },
+          opacity: 0.84
+        },
+        customdata: rows.map(d => [
+          niceAreaName(d.area_name),
+          d.priority_score,
+          d.access_risk,
+          d.conflict_score,
+          d.demographic_vulnerability
+        ]),
+        hovertemplate:
+          "<b>%{customdata[0]}</b><br>" +
+          "Priority score: %{customdata[1]:.3f}<br>" +
+          "Access risk: %{customdata[2]:.3f}<br>" +
+          "Conflict score: %{customdata[3]:.3f}<br>" +
+          "Demographic vulnerability: %{customdata[4]:.3f}<extra></extra>",
+        showlegend: false
+      };
+
+      const layout = baseLayout(
+        `Why some governorates rise in priority (${data.label})`,
+        "Access risk",
+        "Conflict score"
+      );
+
+      layout.margin.r = 80;
+
+      Plotly.newPlot("chart", [trace], layout, {
+        responsive: true,
+        displayModeBar: false
+      });
+    }
+
+    // =========================
+    // CHAPTER UPDATE
+    // =========================
+    function updateCard(index) {
+      const chapter = chapters[index];
+      document.getElementById("cardChapter").textContent = chapter.label;
+      document.getElementById("cardTitle").textContent = chapter.title;
+      document.getElementById("cardText").textContent = chapter.text;
+      document.getElementById("subtitle").textContent = chapter.subtitle;
+
+      document.querySelectorAll(".dot").forEach((dot, i) => {
+        dot.classList.toggle("active", i === index);
+      });
+      const storyCard = document.querySelector(".story-card");
+
+if (index === 8) {
+  storyCard.style.visibility = "hidden";
+} else {
+  storyCard.style.visibility = "visible";
+}
+    }
+
+  function updateChapter(index) {
+  activeChapter = index;
+  updateCard(index);
+
+  switch (index) {
+    case 0:
+      renderWorldScatter();
+      break;
+    case 1:
+      renderTopCountriesBar();
+      break;
+    case 2:
+      renderLebanonScatter();
+      break;
+    case 3:
+      renderAreaConflictBar();
+      break;
+    case 4:
+      renderComponentsBar();
+      break;
+    case 5:
+      renderPriorityRanking();
+      break;
+    case 6:
+      renderPriorityTrend();
+      break;
+    case 7:
+      renderPriorityScatter();
+      break;
+    case 8:
+      renderDashboardIntro();
+      break;
+    default:
+      renderWorldScatter();
+  }
+}
+    // =========================
+    // BUILD SCROLL + DOTS
+    // =========================
+    function buildScrollSections() {
+      const scrollColumn = document.getElementById("scrollColumn");
+      const dotNav = document.getElementById("dotNav");
+
+      chapters.forEach((chapter, i) => {
+        const step = document.createElement("section");
+        step.className = "step";
+        step.dataset.index = i;
+
+        const anchor = document.createElement("div");
+        anchor.className = "step-anchor";
+        step.appendChild(anchor);
+        scrollColumn.appendChild(step);
+
+        const dot = document.createElement("button");
+        dot.className = "dot";
+        dot.setAttribute("aria-label", chapter.title);
+        dot.addEventListener("click", () => {
+          step.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+        dotNav.appendChild(dot);
+      });
+    }
+
+    function activateScrollObserver() {
+      const steps = document.querySelectorAll(".step");
+
+      const observer = new IntersectionObserver(
+        entries => {
+          entries.forEach(entry => {
+            if (entry.isIntersecting) {
+              const index = +entry.target.dataset.index;
+              if (index !== activeChapter) {
+                updateChapter(index);
+              }
+            }
+          });
+        },
+        { threshold: 0.55 }
+      );
+
+      steps.forEach(step => observer.observe(step));
+    }
+
+    // =========================
+    // INIT
+    // =========================
+    async function init() {
+      buildScrollSections();
+
+      const [worldMonthly, worldCountry, lebanon] = await Promise.all([
+        loadCsvWithFallback(WORLD_MONTHLY_CSV_PATHS),
+        loadCsvWithFallback(WORLD_COUNTRY_CSV_PATHS),
+        loadCsvWithFallback(LEBANON_CSV_PATHS)
+      ]);
+
+      worldMonthlyData = worldMonthly.filter(
+        d => d.year && getWorldMonthNum(d) && d.events !== undefined
+      );
+
+      worldCountryData = worldCountry.filter(
+        d => d.year &&
+             getWorldMonthNum(d) &&
+             d.events !== undefined &&
+             getCountryName(d)
+      );
+
+      lebanonData = lebanon.filter(
+        d => d.year && getLebMonthNum(d) && d.admin1_norm
+      );
+
+      console.log("World monthly years:", [...new Set(worldMonthlyData.map(d => +d.year))].sort());
+      console.log("World country years:", [...new Set(worldCountryData.map(d => +d.year))].sort());
+      console.log("Lebanon years:", [...new Set(lebanonData.map(d => +d.year))].sort());
+
+      activateScrollObserver();
+      updateChapter(0);
+
+      document.getElementById("loading").style.display = "none";
+    }
+
+    init();
+
+    window.addEventListener("resize", () => {
+      updateChapter(activeChapter);
+    });
+  </script>
 </body>
 </html>
