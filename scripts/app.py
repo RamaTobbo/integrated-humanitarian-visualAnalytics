@@ -855,8 +855,6 @@ if "country_event_type" not in st.session_state:
 if "country_metric" not in st.session_state:
     st.session_state["country_metric"] = "events"
 
-if "country_priority_mode" not in st.session_state:
-    st.session_state["country_priority_mode"] = "Country-normalized"
 
 # ==================================================
 # WORLD VIEW
@@ -1521,12 +1519,7 @@ else:
         st.dataframe(area_table, use_container_width=True)
 
     else:
-        priority_mode = st.sidebar.selectbox(
-            "Priority score type",
-            ["Country-normalized", "Global-normalized"],
-            index=0 if st.session_state["country_priority_mode"] == "Country-normalized" else 1,
-        )
-        st.session_state["country_priority_mode"] = priority_mode
+        
 
         country_priority_df = country_priority_rows[
             (country_priority_rows["year"] == selected_year)
@@ -1583,17 +1576,10 @@ else:
             st.title(f"{selected_country_name} Priority Map")
             st.warning("No priority data available for this country for the selected month/year.")
             st.stop()
-
-        if priority_mode == "Country-normalized":
-            score_col = "priority_score_country"
-            rank_col = "priority_rank_country"
-            class_col = "priority_class_country"
-            title_suffix = "Country-normalized priority"
-        else:
-            score_col = "priority_score_global"
-            rank_col = "priority_rank_global"
-            class_col = "priority_class_global"
-            title_suffix = "Global-normalized priority"
+        score_col = "priority_score_country"
+        rank_col = "priority_rank_country"
+        class_col = "priority_class_country"
+        title_suffix = "Priority"
 
         merged_priority = boundary_gdf.merge(
             country_priority_df,
