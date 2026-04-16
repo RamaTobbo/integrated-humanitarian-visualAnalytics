@@ -362,8 +362,9 @@ def load_world():
     else:
         world["country_name_geo"] = world["iso_a3"]
 
-    return world
+    world = world[world["iso_a3"] != "-99"].copy()
 
+    return world
 
 @st.cache_data(show_spinner=False)
 def load_country_admin1_boundary(iso3):
@@ -561,6 +562,7 @@ if st.session_state["view"] == "world":
     merged_world = world.merge(country_period, how="left", on="iso_n3")
     merged_world["events"] = merged_world["events"].fillna(0)
     merged_world["fatalities"] = merged_world["fatalities"].fillna(0)
+    merged_world["country"] = merged_world["country"].fillna(merged_world["country_name_geo"])
 
     total_events = int(country_period["events"].sum())
     total_fatalities = int(country_period["fatalities"].sum())
