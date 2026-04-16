@@ -1,3 +1,6 @@
+import os
+os.environ["OGR_GEOJSON_MAX_OBJ_SIZE"] = "0"
+
 import json
 from pathlib import Path
 
@@ -12,18 +15,17 @@ st.set_page_config(page_title="Global Conflict Dashboard", layout="wide")
 # ==================================================
 # PATHS
 # ==================================================
-world_geojson_path = Path("data/raw/boundaries/world_countries.geojson")
-conflict_country_path = Path("data/cleaned/global/conflict_country_monthlybytype.csv")
-conflict_admin_path = Path("data/cleaned/global/conflict_standardized_monthlybytype.csv")
+BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Put country boundary files here:
-# data/cleaned/boundaries/countries/LBN_adm1.geojson
-# data/cleaned/boundaries/countries/SYR_adm1.geojson
-# data/cleaned/boundaries/countries/UKR_adm1.geojson
-country_boundaries_dir = Path("data/cleaned/boundaries/countries")
+world_geojson_path = BASE_DIR / "data" / "raw" / "boundaries" / "world_countries.geojson"
+conflict_country_path = BASE_DIR / "data" / "cleaned" / "global" / "conflict_country_monthlybytype.csv"
+conflict_admin_path = BASE_DIR / "data" / "cleaned" / "global" / "conflict_standardized_monthlybytype.csv"
 
-# Optional fallback only for Lebanon if you still do not have LBN_adm1.geojson
-lbn_admin2_fallback_path = Path("data/raw/boundaries/geoBoundaries-LBN-ADM2.geojson")
+# Folder containing downloaded country drilldown boundaries
+country_boundaries_dir = BASE_DIR / "data" / "cleaned" / "boundaries" / "countries"
+
+# Optional Lebanon fallback if LBN_adm1.geojson is missing
+lbn_admin2_fallback_path = BASE_DIR / "data" / "raw" / "boundaries" / "geoBoundaries-LBN-ADM2.geojson"
 
 # ==================================================
 # CONSTANTS
@@ -43,7 +45,7 @@ MONTH_MAP = {
     "December": 12,
 }
 
-# Optional fallback mapping for Lebanon only
+# Optional Lebanon fallback mapping
 DISTRICT_TO_ADMIN1_GEO = {
     "Akkar": "Akkar",
     "Aley": "Mount Lebanon",
@@ -71,6 +73,19 @@ DISTRICT_TO_ADMIN1_GEO = {
     "West Bekaa": "Bekaa",
     "Zahle": "Bekaa",
     "Zgharta": "North",
+}
+
+# Optional aliases for country-name mismatches
+COUNTRY_NAME_ALIASES = {
+    "Russia": ["Russia", "Russian Federation"],
+    "United States of America": ["United States of America", "United States", "USA"],
+    "Syria": ["Syria", "Syrian Arab Republic"],
+    "Iran": ["Iran", "Iran (Islamic Republic of)", "Islamic Republic of Iran"],
+    "Venezuela": ["Venezuela", "Venezuela, Bolivarian Republic of"],
+    "Bolivia": ["Bolivia", "Bolivia (Plurinational State of)"],
+    "Tanzania": ["Tanzania", "United Republic of Tanzania"],
+    "Moldova": ["Moldova", "Republic of Moldova"],
+    "Laos": ["Laos", "Lao People's Democratic Republic"],
 }
 
 # ==================================================
@@ -171,16 +186,6 @@ def repair_geometries(gdf):
     return gdf
 
 
-def make_hover_customdata(df):
-    cols = []
-    for c in ["events", "fatalities", "priority_score"]:
-        if c in df.columns:
-            cols.append(c)
-    if not cols:
-        return None
-    return df[cols].fillna(0).astype(float).values
-
-
 def compute_conflict_priority(df, geo_col):
     out = (
         df.dropna(subset=[geo_col])
@@ -200,9 +205,9 @@ def compute_conflict_priority(df, geo_col):
     return out
 
 
-def extract_selected_country_iso3(event):
+def extract_selected_country_info(event):
     if event is None:
-        return None
+        return None, None
 
     try:
         if isinstance(event, dict):
@@ -212,22 +217,22 @@ def extract_selected_country_iso3(event):
             selection = getattr(event, "selection", {})
             points = selection.get("points", []) if isinstance(selection, dict) else []
     except Exception:
-        return None
+        return None, None
 
     if not points:
-        return None
+        return None, None
 
     point = points[0]
-
     custom = point.get("customdata", [])
-    if custom and len(custom) > 0:
-        return str(custom[0]).strip().upper()
+
+    if custom and len(custom) >= 2:
+        return str(custom[0]).strip().upper(), str(custom[1]).strip()
 
     location = point.get("location")
     if location:
-        return str(location).strip().upper()
+        return str(location).strip().upper(), None
 
-    return None
+    return None, None
 
 
 def detect_name_column(gdf):
@@ -249,6 +254,25 @@ def detect_name_column(gdf):
         if col in gdf.columns:
             return col
     return None
+
+
+def get_country_admin_rows(admin_df, selected_country_name):
+    # exact first
+    out = admin_df[
+        admin_df["country"].str.lower() == str(selected_country_name).strip().lower()
+    ].copy()
+
+    if not out.empty:
+        return out
+
+    aliases = COUNTRY_NAME_ALIASES.get(selected_country_name, [selected_country_name])
+    aliases_norm = [str(x).strip().lower() for x in aliases]
+
+    out = admin_df[
+        admin_df["country"].str.lower().isin(aliases_norm)
+    ].copy()
+
+    return out
 
 
 # ==================================================
@@ -317,7 +341,6 @@ def load_admin_conflict():
 
     df["year"] = df["year"].astype(int)
     df["month_num"] = df["month_num"].astype(int)
-
     df["admin1_norm"] = df["admin1"].apply(normalize_text)
     return df
 
@@ -332,11 +355,6 @@ def load_world():
         world = world.to_crs(epsg=4326)
 
     world["iso_n3"] = world["iso_n3"].astype(str).str.strip().str.zfill(3)
-
-    if "iso_a3" not in world.columns:
-        st.error("World GeoJSON must contain 'iso_a3'.")
-        st.stop()
-
     world["iso_a3"] = world["iso_a3"].astype(str).str.strip().str.upper()
 
     if "name" in world.columns:
@@ -360,6 +378,12 @@ def load_country_admin1_boundary(iso3):
         else:
             gdf = gdf.to_crs(epsg=4326)
 
+        # simplify a bit for heavy countries like Canada/USA/Russia
+        try:
+            gdf["geometry"] = gdf["geometry"].simplify(0.01, preserve_topology=True)
+        except Exception:
+            pass
+
         gdf = repair_geometries(gdf)
 
         name_col = detect_name_column(gdf)
@@ -380,13 +404,9 @@ def load_country_admin1_boundary(iso3):
         else:
             gdf = gdf.to_crs(epsg=4326)
 
-        if "shapeName" not in gdf.columns:
-            return None, None
-
         gdf["shapeName"] = gdf["shapeName"].astype(str).str.strip()
         gdf["admin_name"] = gdf["shapeName"].map(DISTRICT_TO_ADMIN1_GEO)
         gdf = gdf.dropna(subset=["admin_name"]).copy()
-
         gdf = gdf.dissolve(by="admin_name", as_index=False)
         gdf = repair_geometries(gdf)
         gdf["admin_name_norm"] = gdf["admin_name"].apply(normalize_text)
@@ -397,7 +417,7 @@ def load_country_admin1_boundary(iso3):
 
 
 # ==================================================
-# LOAD EVERYTHING
+# LOAD
 # ==================================================
 ensure_required_files()
 
@@ -442,7 +462,6 @@ if "country_event_type" not in st.session_state:
 
 if "country_metric" not in st.session_state:
     st.session_state["country_metric"] = "events"
-
 
 # ==================================================
 # WORLD VIEW
@@ -527,8 +546,10 @@ if st.session_state["view"] == "world":
     ].copy()
     filtered_world = filter_event_type(filtered_world, selected_event_type)
 
+    st.title("Global Conflict Overview" if selected_country == "All" else f"{selected_country} Conflict Overview")
+    st.caption(f"{selected_month} {selected_year} | Event Type: {selected_event_type}")
+
     if filtered_world.empty:
-        st.title("Global Conflict Overview")
         st.warning("No data available for the selected filters.")
         st.stop()
 
@@ -544,9 +565,6 @@ if st.session_state["view"] == "world":
     total_events = int(country_period["events"].sum())
     total_fatalities = int(country_period["fatalities"].sum())
     countries_with_data = int((country_period[metric] > 0).sum())
-
-    st.title("Global Conflict Overview" if selected_country == "All" else f"{selected_country} Conflict Overview")
-    st.caption(f"{selected_month} {selected_year} | Event Type: {selected_event_type}")
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Total events", f"{total_events:,}")
@@ -592,19 +610,17 @@ if st.session_state["view"] == "world":
             key="world_chart_all",
         )
 
-        clicked_iso3 = extract_selected_country_iso3(event)
+        clicked_iso3, clicked_country_name = extract_selected_country_info(event)
         if clicked_iso3:
-            clicked_row = world[world["iso_a3"] == clicked_iso3]
-            if not clicked_row.empty:
-                st.session_state["selected_iso3"] = clicked_iso3
-                st.session_state["selected_country_name"] = clicked_row["country_name_geo"].iloc[0]
-                st.session_state["view"] = "country"
-                st.session_state["country_year"] = None
-                st.session_state["country_month"] = None
-                st.rerun()
+            st.session_state["selected_iso3"] = clicked_iso3
+            st.session_state["selected_country_name"] = clicked_country_name
+            st.session_state["view"] = "country"
+            st.session_state["country_year"] = None
+            st.session_state["country_month"] = None
+            st.rerun()
 
     else:
-        selected_geo = merged_world[merged_world["iso_n3"].isin(country_period["iso_n3"].unique())].copy()
+        selected_geo = merged_world[merged_world["country_name_geo"] == selected_country].copy()
 
         fig_selected = px.choropleth(
             selected_geo,
@@ -621,15 +637,15 @@ if st.session_state["view"] == "world":
                 "iso_n3": False,
                 "iso_a3": False,
             },
-            custom_data=["iso_a3", "country_name_geo"],
-            projection="mercator",
+            projection="natural earth",
             title=f"{selected_country} - {metric.capitalize()} ({selected_month} {selected_year}) | {selected_event_type}",
         )
 
         fig_selected.update_traces(marker_line_color="gray", marker_line_width=0.6)
         fig_selected.update_geos(
-            fitbounds="locations",
-            visible=False,
+            showcountries=True,
+            showcoastlines=True,
+            showframe=False,
             bgcolor="rgba(0,0,0,0)",
         )
         fig_selected.update_layout(
@@ -670,7 +686,7 @@ else:
     selected_iso3 = st.session_state["selected_iso3"]
     selected_country_name = st.session_state["selected_country_name"]
 
-    if not selected_iso3:
+    if not selected_iso3 or not selected_country_name:
         st.session_state["view"] = "world"
         st.rerun()
 
@@ -691,17 +707,7 @@ else:
         )
         st.stop()
 
-    country_admin = admin_conflict[
-        admin_conflict["country"].str.lower() == str(selected_country_name).strip().lower()
-    ].copy()
-
-    if country_admin.empty:
-        world_row = world[world["iso_a3"] == selected_iso3]
-        if not world_row.empty:
-            alt_country_name = world_row["country_name_geo"].iloc[0]
-            country_admin = admin_conflict[
-                admin_conflict["country"].str.lower() == str(alt_country_name).strip().lower()
-            ].copy()
+    country_admin = get_country_admin_rows(admin_conflict, selected_country_name)
 
     if country_admin.empty:
         st.title(f"{selected_country_name} Admin1 View")
@@ -779,13 +785,23 @@ else:
     ].copy()
     filtered_country = filter_event_type(filtered_country, selected_event_type)
 
+    if filtered_country.empty:
+        st.title(f"{selected_country_name} Admin1 View")
+        st.warning(f"No conflict data available for {selected_country_name} for the selected filters.")
+        st.stop()
+
     grouped = (
         filtered_country.dropna(subset=["admin1_norm"])
         .groupby("admin1_norm", as_index=False)
         .agg({"events": "sum", "fatalities": "sum"})
     )
 
-    merged_country = boundary_gdf.merge(grouped, how="left", left_on="admin_name_norm", right_on="admin1_norm")
+    merged_country = boundary_gdf.merge(
+        grouped,
+        how="left",
+        left_on="admin_name_norm",
+        right_on="admin1_norm"
+    )
     merged_country["events"] = pd.to_numeric(merged_country["events"], errors="coerce").fillna(0)
     merged_country["fatalities"] = pd.to_numeric(merged_country["fatalities"], errors="coerce").fillna(0)
     merged_country = repair_geometries(merged_country)
@@ -794,9 +810,6 @@ else:
     pad_x = (maxx - minx) * 0.08 if maxx > minx else 1
     pad_y = (maxy - miny) * 0.08 if maxy > miny else 1
 
-    # ==========================================
-    # CONFLICT VIEW
-    # ==========================================
     if view_mode == "Conflict View":
         st.title(f"{selected_country_name} Admin1 Map")
         st.caption(f"{selected_month} {selected_year} | Event Type: {selected_event_type}")
@@ -903,24 +916,22 @@ else:
         )
         st.dataframe(area_table, use_container_width=True)
 
-    # ==========================================
-    # PRIORITY VIEW
-    # ==========================================
     else:
         st.title(f"{selected_country_name} Priority Map")
         st.caption(f"{selected_month} {selected_year} | Priority based on events and fatalities")
 
         priority_values = compute_conflict_priority(filtered_country, "admin1_norm")
         merged_priority = boundary_gdf.merge(
-            priority_values, how="left", left_on="admin_name_norm", right_on="admin1_norm"
+            priority_values,
+            how="left",
+            left_on="admin_name_norm",
+            right_on="admin1_norm"
         )
 
         for col in ["events", "fatalities", "priority_score"]:
             merged_priority[col] = pd.to_numeric(merged_priority[col], errors="coerce").fillna(0)
 
-        merged_priority["priority_rank"] = pd.to_numeric(
-            merged_priority["priority_rank"], errors="coerce"
-        )
+        merged_priority["priority_rank"] = pd.to_numeric(merged_priority["priority_rank"], errors="coerce")
         merged_priority = repair_geometries(merged_priority)
 
         top_row = merged_priority.sort_values("priority_score", ascending=False).head(1)

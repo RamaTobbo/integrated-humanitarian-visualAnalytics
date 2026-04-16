@@ -6,7 +6,7 @@ import pandas as pd
 # ==========================================
 # PATHS
 # ==========================================
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent 
 ACLED_COUNTRY_PATH = BASE_DIR / "data" / "cleaned" / "global" / "conflict_country_monthlybytype.csv"
 OUTPUT_DIR = BASE_DIR / "data" / "cleaned" / "boundaries" / "countries"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
