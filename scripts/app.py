@@ -1575,7 +1575,7 @@ else:
         else:
             st.info("No data available for this year")
 
-        st.subheader(f"Top 10 admin1 areas by {metric}")
+        st.subheader(f"Top 10 areas by {metric}")
         top_areas = (
             merged_country[["admin_name", "events", "fatalities"]]
             .sort_values(metric, ascending=False)
@@ -1783,7 +1783,7 @@ else:
 
         st.plotly_chart(fig_priority, use_container_width=True, key=f"{selected_iso3}_priority_chart")
 
-        st.subheader("Top 10 admin1 areas by priority")
+        st.subheader("Top 10  areas by priority")
         top_priority = (
             merged_priority[["admin_name", score_col, rank_col, class_col]]
             .sort_values([score_col, "admin_name"], ascending=[False, True])
