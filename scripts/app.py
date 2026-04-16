@@ -1503,6 +1503,77 @@ else:
         add_country_outline(fig_country, merged_country)
 
         st.plotly_chart(fig_country, use_container_width=True, key=f"{selected_iso3}_conflict_chart")
+        st.subheader(f"Displaced people in ({selected_year})")
+
+        selected_country_norm = canonical_country_norm(selected_country_name)
+
+        yearly_disp = displacement_dest[
+            (displacement_dest["country"] == selected_country_norm)
+            & (displacement_dest["year"] == selected_year)
+        ].copy()
+
+        if not yearly_disp.empty:
+            yearly_disp["admin1_norm"] = yearly_disp["admin1_norm"].apply(
+                lambda x: standardize_admin_name(x, selected_country_name)
+            )
+
+            yearly_disp_grouped = (
+                yearly_disp.groupby("admin1_norm", as_index=False)["displaced_in"]
+                .sum()
+            )
+
+            # attach readable admin names from boundary file
+            admin_name_lookup = (
+                boundary_gdf[["admin_name", "admin_name_norm"]]
+                .drop_duplicates()
+                .rename(columns={"admin_name_norm": "admin1_norm"})
+            )
+
+            yearly_disp_grouped = yearly_disp_grouped.merge(
+                admin_name_lookup,
+                how="left",
+                on="admin1_norm"
+            )
+
+            yearly_disp_grouped["label"] = yearly_disp_grouped["admin_name"].fillna(yearly_disp_grouped["admin1_norm"])
+
+            yearly_disp_grouped = yearly_disp_grouped.sort_values("displaced_in", ascending=False)
+
+            fig_disp_bar = px.bar(
+                yearly_disp_grouped,
+                x="label",
+                y="displaced_in",
+                title=f"Displaced people in {selected_country_name} ({selected_year})",
+                labels={
+                    "label": "Admin1",
+                    "displaced_in": "Displaced people"
+                },
+                 color_discrete_sequence=["#F08D39"] 
+                
+            )
+
+            fig_disp_bar.update_layout(
+                xaxis_title="Admin1",
+                yaxis_title="Displaced people",
+                xaxis_tickangle=-45,
+                height=500,
+                margin=dict(l=20, r=20, t=60, b=120),
+                paper_bgcolor="white",
+                plot_bgcolor="white",
+              
+            )
+
+            st.plotly_chart(fig_disp_bar, use_container_width=True, key=f"{selected_iso3}_displacement_bar_{selected_year}")
+
+            disp_table = yearly_disp_grouped[["label", "displaced_in"]].rename(
+                columns={
+                    "label": "Admin1",
+                    "displaced_in": "Displaced People"
+                }
+            )
+            st.dataframe(disp_table, use_container_width=True)
+        else:
+            st.info("No data available for this year")
 
         st.subheader(f"Top 10 admin1 areas by {metric}")
         top_areas = (
