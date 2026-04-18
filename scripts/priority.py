@@ -1,6 +1,8 @@
 from pathlib import Path
 import pandas as pd
 import numpy as np
+import unicodedata
+import re
 
 # ==================================================
 # PATHS
@@ -13,9 +15,7 @@ acled_files = [
     Path("data/raw/global/regions_2026/US-and-Canada_aggregated_data_up_to_week_of-2026-03-28.xlsx"),
 ]
 
-
-
-displacement_path = Path("data/cleaned/global/displacement_cleaned_2024_2026.csv")
+displacement_path = Path("data/cleaned/displacement/displacement_unified_allcountries_2024_2026.csv")
 
 output_dir = Path("data/cleaned/global")
 output_dir.mkdir(parents=True, exist_ok=True)
@@ -24,19 +24,149 @@ output_admin1 = output_dir / "global_priority_admin1_with_displacement_monthly.c
 output_country = output_dir / "global_priority_country_with_displacement_monthly.csv"
 
 # ==================================================
+# CONSTANTS
+# ==================================================
+MIN_YEAR = 2024
+MAX_YEAR = 2026
+
+# ==================================================
 # HELPERS
 # ==================================================
 def normalize_text(value):
     if pd.isna(value):
         return None
     value = str(value).strip().lower()
+    value = unicodedata.normalize("NFKD", value)
+    value = "".join(ch for ch in value if not unicodedata.combining(ch))
     value = value.replace("–", "-").replace("—", "-")
     value = value.replace("_", " ")
-    value = " ".join(value.split())
+    value = value.replace("/", " ")
+    value = value.replace(",", " ")
+    value = value.replace("’", "'")
+    value = re.sub(r"\s+", " ", value).strip()
     return value
+
+
+def standardize_country(value):
+    value = normalize_text(value)
+    if value is None:
+        return None
+
+    mapping = {
+        "lebanon": "lebanon",
+        "syrian arab republic": "syria",
+        "syria": "syria",
+        "turkiye": "turkey",
+        "turkey": "turkey",
+        "ukraine": "ukraine",
+        "russian federation": "russia",
+        "russia": "russia",
+        "united states of america": "united states of america",
+        "united states": "united states of america",
+        "usa": "united states of america",
+        "czech republic": "czechia",
+        "iran (islamic republic of)": "iran",
+        "venezuela, bolivarian republic of": "venezuela",
+        "bolivia (plurinational state of)": "bolivia",
+        "united republic of tanzania": "tanzania",
+        "republic of moldova": "moldova",
+        "lao people's democratic republic": "laos",
+        "state of palestine": "palestine",
+        "democratic republic of congo": "democratic republic of the congo",
+        "congo dem. rep.": "democratic republic of the congo",
+        "dr congo": "democratic republic of the congo",
+        "congo rep.": "republic of the congo",
+        "republic of the congo": "republic of the congo",
+    }
+    return mapping.get(value, value)
+
+
+def standardize_admin1(value, country=None):
+    value = normalize_text(value)
+    country = standardize_country(country)
+
+    if value is None or value in {"", "nan", "none", "not available", "unknown"}:
+        return None
+
+    if country == "lebanon":
+        mapping = {
+            "akkar": "akkar",
+            "aakkar": "akkar",
+
+            "beirut": "beirut",
+            "beyrouth": "beirut",
+
+            "baabda": "mount lebanon",
+            "aley": "mount lebanon",
+            "aaley": "mount lebanon",
+            "chouf": "mount lebanon",
+            "shouf": "mount lebanon",
+            "el metn": "mount lebanon",
+            "metn": "mount lebanon",
+            "matn": "mount lebanon",
+            "kesrouan": "mount lebanon",
+            "keserwan": "mount lebanon",
+            "jbeil": "mount lebanon",
+            "byblos": "mount lebanon",
+            "mount lebanon": "mount lebanon",
+            "mont liban": "mount lebanon",
+            "mont-liban": "mount lebanon",
+            "keserwan-jbeil": "mount lebanon",
+            "keserwan jbeil": "mount lebanon",
+
+            "tripoli": "north",
+            "zgharta": "north",
+            "batroun": "north",
+            "koura": "north",
+            "bcharre": "north",
+            "bsharri": "north",
+            "minieh dinnieh": "north",
+            "minieh-dinnieh": "north",
+            "north": "north",
+            "liban nord": "north",
+            "liban-nord": "north",
+
+            "zahle": "bekaa",
+            "zahleh": "bekaa",
+            "west bekaa": "bekaa",
+            "rachaya": "bekaa",
+            "rashaya": "bekaa",
+            "bekaa": "bekaa",
+            "beqaa": "bekaa",
+
+            "baalbek": "baalbek-hermel",
+            "hermel": "baalbek-hermel",
+            "baalbek hermel": "baalbek-hermel",
+            "baalbek-hermel": "baalbek-hermel",
+
+            "tyre": "south",
+            "sour": "south",
+            "saida": "south",
+            "sidon": "south",
+            "jezzine": "south",
+            "south": "south",
+            "liban sud": "south",
+            "liban-sud": "south",
+
+            "nabatiyeh": "al nabatieh",
+            "nabatiye": "al nabatieh",
+            "nabatyeh": "al nabatieh",
+            "nabatye": "al nabatieh",
+            "marjayoun": "al nabatieh",
+            "marjaayoun": "al nabatieh",
+            "bint jbeil": "al nabatieh",
+            "bent jbail": "al nabatieh",
+            "hasbaya": "al nabatieh",
+            "al nabatieh": "al nabatieh",
+        }
+        return mapping.get(value, value)
+
+    return value
+
 
 def safe_numeric(series):
     return pd.to_numeric(series, errors="coerce").fillna(0)
+
 
 def minmax(series):
     s = pd.to_numeric(series, errors="coerce").fillna(0)
@@ -45,6 +175,7 @@ def minmax(series):
     if smax == smin:
         return pd.Series([0.0] * len(s), index=s.index)
     return (s - smin) / (smax - smin)
+
 
 def make_priority_class(series):
     q1 = series.quantile(0.25)
@@ -78,15 +209,37 @@ acled = pd.concat(acled_dfs, ignore_index=True)
 # ==================================================
 # CLEAN ACLED
 # ==================================================
+required_acled_cols = [
+    "WEEK",
+    "REGION",
+    "COUNTRY",
+    "ADMIN1",
+    "EVENTS",
+    "FATALITIES",
+    "POPULATION_EXPOSURE",
+    "CENTROID_LATITUDE",
+    "CENTROID_LONGITUDE",
+]
+missing_acled = [c for c in required_acled_cols if c not in acled.columns]
+if missing_acled:
+    raise ValueError(f"Missing ACLED columns: {missing_acled}")
+
 acled["WEEK"] = pd.to_datetime(acled["WEEK"], errors="coerce")
 acled = acled.dropna(subset=["WEEK"]).copy()
 
 acled["REGION"] = acled["REGION"].apply(normalize_text)
-acled["COUNTRY"] = acled["COUNTRY"].apply(normalize_text)
-acled["ADMIN1"] = acled["ADMIN1"].apply(normalize_text)
-acled["EVENT_TYPE"] = acled["EVENT_TYPE"].apply(normalize_text)
-acled["SUB_EVENT_TYPE"] = acled["SUB_EVENT_TYPE"].apply(normalize_text)
-acled["DISORDER_TYPE"] = acled["DISORDER_TYPE"].apply(normalize_text)
+acled["COUNTRY"] = acled["COUNTRY"].apply(standardize_country)
+acled["ADMIN1"] = acled.apply(
+    lambda r: standardize_admin1(r["ADMIN1"], r["COUNTRY"]),
+    axis=1
+)
+
+if "EVENT_TYPE" in acled.columns:
+    acled["EVENT_TYPE"] = acled["EVENT_TYPE"].apply(normalize_text)
+if "SUB_EVENT_TYPE" in acled.columns:
+    acled["SUB_EVENT_TYPE"] = acled["SUB_EVENT_TYPE"].apply(normalize_text)
+if "DISORDER_TYPE" in acled.columns:
+    acled["DISORDER_TYPE"] = acled["DISORDER_TYPE"].apply(normalize_text)
 
 acled["EVENTS"] = safe_numeric(acled["EVENTS"])
 acled["FATALITIES"] = safe_numeric(acled["FATALITIES"])
@@ -97,6 +250,9 @@ acled["CENTROID_LONGITUDE"] = pd.to_numeric(acled["CENTROID_LONGITUDE"], errors=
 acled["year"] = acled["WEEK"].dt.year
 acled["month_num"] = acled["WEEK"].dt.month
 acled["month"] = acled["WEEK"].dt.strftime("%B")
+
+acled = acled[acled["year"].between(MIN_YEAR, MAX_YEAR)].copy()
+acled = acled.dropna(subset=["COUNTRY", "ADMIN1"]).copy()
 
 # ==================================================
 # MONTHLY ACLED AGGREGATION AT ADMIN1
@@ -129,41 +285,52 @@ admin1_monthly = admin1_monthly.dropna(subset=["country", "admin1_norm"]).copy()
 
 # ==================================================
 # LOAD DISPLACEMENT
+# expects:
+# country, year, month_num, month, admin1_norm, displaced_in, displaced_from
 # ==================================================
 displacement = pd.read_csv(displacement_path)
 displacement.columns = [str(c).strip() for c in displacement.columns]
 
-# ==================================================
-# CLEAN DISPLACEMENT
-# admin0Name = country
-# admin1Name = destination admin1
-# numPresentIdpInd = number of displaced people present
-# ==================================================
-displacement = displacement.rename(columns={
-    "admin0Name": "country",
-    "admin1Name": "admin1_norm",
-    "numPresentIdpInd": "displaced",
-    "yearReportingDate": "year",
-    "monthReportingDate": "month_num",
-})
+required_disp_cols = ["country", "admin1_norm", "year", "month_num", "displaced_in"]
+missing_disp = [c for c in required_disp_cols if c not in displacement.columns]
+if missing_disp:
+    raise ValueError(f"Missing displacement columns: {missing_disp}")
 
-displacement["country"] = displacement["country"].apply(normalize_text)
-displacement["admin1_norm"] = displacement["admin1_norm"].apply(normalize_text)
+displacement["country"] = displacement["country"].apply(standardize_country)
+displacement["admin1_norm"] = displacement.apply(
+    lambda r: standardize_admin1(r["admin1_norm"], r["country"]),
+    axis=1
+)
 
 displacement["year"] = pd.to_numeric(displacement["year"], errors="coerce")
 displacement["month_num"] = pd.to_numeric(displacement["month_num"], errors="coerce")
-displacement["displaced"] = pd.to_numeric(displacement["displaced"], errors="coerce").fillna(0)
+displacement["displaced_in"] = pd.to_numeric(displacement["displaced_in"], errors="coerce").fillna(0)
 
-# keep only needed columns
+if "displaced_from" in displacement.columns:
+    displacement["displaced_from"] = pd.to_numeric(displacement["displaced_from"], errors="coerce").fillna(0)
+else:
+    displacement["displaced_from"] = 0
+
 displacement = displacement[
-    ["country", "admin1_norm", "year", "month_num", "displaced"]
+    displacement["year"].between(MIN_YEAR, MAX_YEAR)
 ].copy()
 
-# aggregate in case there are multiple rows per admin1/month
+displacement = displacement[
+    ["country", "admin1_norm", "year", "month_num", "displaced_in", "displaced_from"]
+].copy()
+
+displacement = displacement.dropna(subset=["country", "admin1_norm", "year", "month_num"])
+
 displacement = (
     displacement.groupby(["country", "admin1_norm", "year", "month_num"], as_index=False)
-    .agg({"displaced": "sum"})
+    .agg({
+        "displaced_in": "sum",
+        "displaced_from": "sum",
+    })
 )
+
+# use destination displacement as main humanitarian load
+displacement["displaced"] = displacement["displaced_in"]
 
 # ==================================================
 # MERGE ACLED + DISPLACEMENT
@@ -174,6 +341,8 @@ admin1_monthly = admin1_monthly.merge(
     how="left"
 )
 
+admin1_monthly["displaced_in"] = admin1_monthly["displaced_in"].fillna(0)
+admin1_monthly["displaced_from"] = admin1_monthly["displaced_from"].fillna(0)
 admin1_monthly["displaced"] = admin1_monthly["displaced"].fillna(0)
 
 # ==================================================
@@ -186,7 +355,7 @@ admin1_monthly["displaced_log"] = np.log1p(admin1_monthly["displaced"])
 
 # ==================================================
 # COUNTRY-LEVEL NORMALIZATION
-# compare admin1 INSIDE the same country/month
+# compare admin1 inside same country/month
 # ==================================================
 admin1_monthly["events_norm_country"] = (
     admin1_monthly.groupby(["country", "year", "month_num"])["events_log"]
@@ -234,7 +403,6 @@ admin1_monthly["displaced_norm_global"] = (
 
 # ==================================================
 # PRIORITY SCORE
-# conflict + displacement + exposure
 # ==================================================
 admin1_monthly["priority_score_country"] = (
     0.35 * admin1_monthly["events_norm_country"] +
@@ -293,6 +461,8 @@ admin1_monthly = admin1_monthly[
         "fatalities",
         "population_exposure",
         "displaced",
+        "displaced_in",
+        "displaced_from",
         "centroid_latitude",
         "centroid_longitude",
         "events_norm_country",
@@ -317,7 +487,6 @@ admin1_monthly = admin1_monthly[
 
 # ==================================================
 # COUNTRY-LEVEL OUTPUT
-# for world choropleth
 # ==================================================
 country_monthly = (
     admin1_monthly.groupby(
@@ -383,8 +552,8 @@ country_monthly = country_monthly.sort_values(
 # ==================================================
 # SAVE
 # ==================================================
-admin1_monthly.to_csv(output_admin1, index=False)
-country_monthly.to_csv(output_country, index=False)
+admin1_monthly.to_csv(output_admin1, index=False, encoding="utf-8-sig")
+country_monthly.to_csv(output_country, index=False, encoding="utf-8-sig")
 
 print("Saved admin1 file:", output_admin1)
 print("Saved country file:", output_country)
@@ -396,4 +565,4 @@ print("\nCountry sample:")
 print(country_monthly.head(10))
 
 print("\nCheck displacement merge:")
-print(admin1_monthly[["country", "admin1_norm", "year", "month_num", "displaced"]].head(20))
+print(admin1_monthly[["country", "admin1_norm", "year", "month_num", "displaced", "displaced_in", "displaced_from"]].head(20))
