@@ -259,15 +259,17 @@ div[data-baseweb="select"] > div:hover {
     border-color: var(--accent-soft) !important;
 }
 div[data-baseweb="select"] svg { fill: var(--text-secondary) !important; }
-div[data-baseweb="select"] div[data-baseweb="tag"] {
+
+            
+div[data-baseweb="select"] div[data-baseweb="tag"] {div[data-baseweb="select"] div[data-baseweb="tag"] {
     background: linear-gradient(135deg, #0ea5e9 0%, #8b5cf6 100%) !important;
     border: none !important;
     border-radius: 999px !important;
     box-shadow: 0 6px 16px rgba(14, 165, 233, 0.16) !important;
 }
-div[data-baseweb="select"] div[data-baseweb="tag"] span,
-div[data-baseweb="select"] div[data-baseweb="tag"] div,
-div[data-baseweb="select"] div[data-baseweb="tag"] svg {
+div[data-baseweb="select"] [data-baseweb="tag"] span,
+div[data-baseweb="select"] [data-baseweb="tag"] div,
+div[data-baseweb="select"] [data-baseweb="tag"] svg {
     color: #ffffff !important;
     fill: #ffffff !important;
 }

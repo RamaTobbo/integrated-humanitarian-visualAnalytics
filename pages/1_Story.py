@@ -262,15 +262,15 @@ div[data-baseweb="select"] > div:hover {
     border-color: var(--accent-soft) !important;
 }
 div[data-baseweb="select"] svg { fill: var(--text-secondary) !important; }
-div[data-baseweb="select"] div[data-baseweb="tag"] {
-    background: linear-gradient(135deg, #0ea5e9 0%, #8b5cf6 100%) !important;
+div[data-baseweb="select"] [data-baseweb="tag"] {
+    background: linear-gradient(135deg, #0d657d 0%, #11485b 100%) !important;
     border: none !important;
     border-radius: 999px !important;
-    box-shadow: 0 6px 16px rgba(14, 165, 233, 0.16) !important;
+    box-shadow: 0 6px 16px rgba(13, 101, 125, 0.22) !important;
 }
-div[data-baseweb="select"] div[data-baseweb="tag"] span,
-div[data-baseweb="select"] div[data-baseweb="tag"] div,
-div[data-baseweb="select"] div[data-baseweb="tag"] svg {
+div[data-baseweb="select"] [data-baseweb="tag"] span,
+div[data-baseweb="select"] [data-baseweb="tag"] div,
+div[data-baseweb="select"] [data-baseweb="tag"] svg {
     color: #ffffff !important;
     fill: #ffffff !important;
 }
@@ -487,7 +487,7 @@ INTRO_STORY_MOTION = {
 INTRO_STORY_COPY = {
     # Replace these messages with your final scrollytelling text later.
     "hero_eyebrow": "Conflict Intelligence Story",
-    "hero_title": "Conflict is never only a battle.",
+    "hero_title": "Conflict: never only a battle.",
     "hero_body": "It expands into displacement, interrupted services, and harder decisions about where help should go first.",
     "slide_1_eyebrow": "01 / Global Conflict",
     "slide_1_title": "Conflict first appears as scale.",

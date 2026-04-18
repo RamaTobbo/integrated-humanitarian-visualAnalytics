@@ -10,13 +10,13 @@ RADAR_AXIS_SPECS = [
     {"key": "education_need", "label": "Education Need", "source_col": "education_priority_score"},
 ]
 
-RADAR_COLORS = ["#0ea5e9", "#10b981", "#f59e0b", "#8b5cf6", "#f97316"]
+RADAR_COLORS = ["#0d657d", "#da323f", "#ff8112", "#8b5e3c", "#b48a64"]
 
 
 def _hex_to_rgba(hex_color, alpha):
     hex_color = hex_color.lstrip("#")
     if len(hex_color) != 6:
-        return f"rgba(14, 165, 233, {alpha})"
+        return f"rgba(13, 101, 125, {alpha})"
     red = int(hex_color[0:2], 16)
     green = int(hex_color[2:4], 16)
     blue = int(hex_color[4:6], 16)
@@ -135,14 +135,14 @@ def build_country_comparison_radar(radar_df, scaling_option=None):
     fig.update_layout(
         paper_bgcolor="#ffffff",
         plot_bgcolor="#ffffff",
-        margin=dict(l=30, r=30, t=55, b=25),
+        margin=dict(l=30, r=30, t=135, b=25),
         height=560,
         legend=dict(
             orientation="h",
-            yanchor="bottom",
-            y=1.08,
+            yanchor="top",
+            y=1.23,
             xanchor="left",
-            x=0.0,
+            x=0.01,
             font=dict(family="Inter", size=11, color="#1b2230"),
             bgcolor="rgba(255,255,255,0.88)",
             bordercolor="#e4e8ef",
@@ -173,6 +173,10 @@ def build_country_comparison_radar(radar_df, scaling_option=None):
         title=dict(
             text="Country Comparison Radar",
             x=0.01,
+            xanchor="left",
+            y=0.99,
+            yanchor="top",
+            pad=dict(b=16),
             font=dict(family="Playfair Display", size=22, color="#1b2230"),
         ),
     )
