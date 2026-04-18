@@ -837,6 +837,9 @@ def metric_label(metric):
         "events":"Events","fatalities":"Fatalities",
         "population_exposure":"Pop. Exposure","displaced":"Displaced",
         "country_priority_score":"Priority Score",
+        "country_priority_score_base":"Base Priority Score",
+        "health_priority_score":"Health Priority",
+        "education_priority_score":"Education Priority",
         "priority_score_country":"Priority Score",
         "priority_score_global":"Priority Score (Global)",
     }.get(metric, metric)
@@ -851,6 +854,128 @@ def fmt_big(n):
     if n >= 1_000:
         return f"{n/1_000:.1f}K"
     return f"{n:,.0f}"
+
+def is_score_metric(metric):
+    return metric in {
+        "country_priority_score",
+        "country_priority_score_base",
+        "priority_score_country",
+        "priority_score_global",
+        "health_priority_score",
+        "education_priority_score",
+    }
+
+def format_metric_value(metric, value):
+    try:
+        value = float(value)
+    except Exception:
+        return "—"
+    return f"{value:.3f}" if is_score_metric(metric) else fmt_big(value)
+
+def get_country_priority_period_row(country_rows, selected_year, selected_month):
+    period_rows = country_rows[
+        (country_rows["year"] == selected_year) &
+        (country_rows["month"].str.lower() == selected_month.lower())
+    ].copy()
+    if period_rows.empty:
+        return None
+    return period_rows.sort_values(["year", "month_num"]).iloc[-1]
+
+def render_country_need_detail(selected_country_name, period_row):
+    if period_row is None:
+        return
+
+    radar_labels = [
+        "Conflict",
+        "Fatalities",
+        "Displacement",
+        "Exposure",
+        "Health Need",
+        "Education Need",
+    ]
+    radar_values = [
+        float(period_row.get("events_norm", 0) or 0),
+        float(period_row.get("fatalities_norm", 0) or 0),
+        float(period_row.get("displaced_norm", 0) or 0),
+        float(period_row.get("exposure_norm", 0) or 0),
+        float(period_row.get("health_priority_score", 0) or 0),
+        float(period_row.get("education_priority_score", 0) or 0),
+    ]
+    radar_values.append(radar_values[0])
+    radar_labels.append(radar_labels[0])
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=radar_values,
+        theta=radar_labels,
+        fill="toself",
+        line=dict(color="#2c4a6e", width=2),
+        fillcolor="rgba(44, 74, 110, 0.18)",
+        hoverinfo="skip",
+        showlegend=False,
+    ))
+    fig.update_layout(
+        polar=dict(
+            bgcolor="#ffffff",
+            radialaxis=dict(
+                visible=True,
+                range=[0, 1],
+                tickfont=dict(family="Inter", size=9, color="#8893a4"),
+                gridcolor="#eef1f6",
+                linecolor="#eef1f6",
+            ),
+            angularaxis=dict(
+                tickfont=dict(family="Inter", size=10, color="#1b2230"),
+                gridcolor="#eef1f6",
+                linecolor="#eef1f6",
+            ),
+        ),
+        paper_bgcolor="#ffffff",
+        margin=dict(l=20, r=20, t=20, b=20),
+        height=340,
+    )
+
+    health_year = int(period_row["health_source_year"]) if pd.notna(period_row.get("health_source_year")) else None
+    education_year = int(period_row["education_source_year"]) if pd.notna(period_row.get("education_source_year")) else None
+    health_count = int(period_row.get("health_indicator_count", 0) or 0)
+    education_count = int(period_row.get("education_indicator_count", 0) or 0)
+
+    st.markdown(
+        f'<div class="section-title"><span class="section-dot"></span>{selected_country_name} Need Profile</div>',
+        unsafe_allow_html=True,
+    )
+    left_col, right_col = st.columns([1.05, 1.15], gap="large")
+    with left_col:
+        st.plotly_chart(fig, use_container_width=True, key=f"need_profile_{canonical_country_norm(selected_country_name)}")
+    with right_col:
+        st.markdown(f"""
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="kpi-card gold" style="margin:0;">
+            <div class="kpi-accent"></div>
+            <div class="kpi-label">Priority Score</div>
+            <div class="kpi-value" style="font-size:28px;">{float(period_row.get("country_priority_score", 0)):.3f}</div>
+            <div class="kpi-sub">Country score for this period</div>
+          </div>
+          <div class="kpi-card" style="margin:0;">
+            <div class="kpi-accent"></div>
+            <div class="kpi-label">Base Score</div>
+            <div class="kpi-value" style="font-size:28px;">{float(period_row.get("country_priority_score_base", 0)):.3f}</div>
+            <div class="kpi-sub">Conflict, exposure, displacement only</div>
+          </div>
+          <div class="kpi-card teal" style="margin:0;">
+            <div class="kpi-accent"></div>
+            <div class="kpi-label">Health Priority</div>
+            <div class="kpi-value" style="font-size:28px;">{float(period_row.get("health_priority_score", 0)):.3f}</div>
+            <div class="kpi-sub">Latest health year: {health_year if health_year is not None else "N/A"} · {health_count} indicator(s)</div>
+          </div>
+          <div class="kpi-card warm" style="margin:0;">
+            <div class="kpi-accent"></div>
+            <div class="kpi-label">Education Priority</div>
+            <div class="kpi-value" style="font-size:28px;">{float(period_row.get("education_priority_score", 0)):.3f}</div>
+            <div class="kpi-sub">Latest education year: {education_year if education_year is not None else "N/A"} · {education_count} indicator(s)</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 def render_top10_grid(df, name_col, val_col, fmt_fn=None):
     items = df[[name_col, val_col]].reset_index(drop=True)
@@ -2058,7 +2183,9 @@ def load_country_priority():
         "year", "month_num", "events", "fatalities", "population_exposure", "displaced",
         "events_log", "fatalities_log", "exposure_log", "displaced_log",
         "events_norm", "fatalities_norm", "exposure_norm", "displaced_norm",
-        "country_priority_score", "country_priority_rank",
+        "country_priority_score_base", "country_priority_score", "country_priority_rank",
+        "health_priority_score", "health_source_year", "health_indicator_count", "health_data_available",
+        "education_priority_score", "education_source_year", "education_indicator_count", "education_data_available",
     ]
     for col in numeric_cols:
         if col in df.columns:
@@ -3425,7 +3552,15 @@ if st.session_state["view"] == "world":
         st.sidebar.markdown('<div class="sidebar-section">Metric</div>', unsafe_allow_html=True)
         metric = st.sidebar.selectbox(
             "Priority Metric",
-            ["country_priority_score","events","fatalities","displaced","population_exposure"],
+            [
+                "country_priority_score",
+                "health_priority_score",
+                "education_priority_score",
+                "events",
+                "fatalities",
+                "displaced",
+                "population_exposure",
+            ],
             index=0,
             label_visibility="collapsed",
         )
@@ -3440,14 +3575,21 @@ if st.session_state["view"] == "world":
             filtered.groupby("country_norm", as_index=False)
             .agg({
                 "events":"sum","fatalities":"sum","population_exposure":"sum",
-                "displaced":"sum","country_priority_score":"mean","country_priority_rank":"min"
+                "displaced":"sum",
+                "country_priority_score":"mean",
+                "country_priority_rank":"min",
+                "health_priority_score":"mean",
+                "education_priority_score":"mean",
             })
         )
         cname_lk = filtered.groupby("country_norm", as_index=False)["country"].first()
         world_pri = world_pri.merge(cname_lk, how="left", on="country_norm")
 
         merged_w = world.merge(world_pri, how="left", on="country_norm")
-        for col in ["events","fatalities","population_exposure","displaced","country_priority_score"]:
+        for col in [
+            "events", "fatalities", "population_exposure", "displaced",
+            "country_priority_score", "health_priority_score", "education_priority_score",
+        ]:
             merged_w[col] = pd.to_numeric(merged_w[col], errors="coerce").fillna(0)
         merged_w["country"] = merged_w["country"].fillna(merged_w["country_name_geo"])
 
@@ -3485,7 +3627,7 @@ if st.session_state["view"] == "world":
         </div>
         """, unsafe_allow_html=True)
 
-        cscale = SCALE_BLUE if metric == "country_priority_score" else SCALE_WARM if metric == "fatalities" else SCALE_TEAL if metric == "displaced" else SCALE_GOLD if metric == "population_exposure" else SCALE_BLUE
+        cscale = SCALE_BLUE if is_score_metric(metric) else SCALE_WARM if metric == "fatalities" else SCALE_TEAL if metric == "displaced" else SCALE_GOLD if metric == "population_exposure" else SCALE_BLUE
 
         if selected_country == "All":
             fig = px.choropleth_mapbox(
@@ -3499,7 +3641,10 @@ if st.session_state["view"] == "world":
                 hover_data={
                     "country":True,"events":True,"fatalities":True,
                     "displaced":True,"population_exposure":True,
-                    "country_priority_score":":.3f","iso_n3":False,"iso_a3":False
+                    "country_priority_score":":.3f",
+                    "health_priority_score":":.3f",
+                    "education_priority_score":":.3f",
+                    "iso_n3":False,"iso_a3":False
                 },
                 custom_data=["iso_a3","country_name_geo"],
                 mapbox_style="carto-positron",
@@ -3549,7 +3694,10 @@ if st.session_state["view"] == "world":
                 hover_data={
                     "country":True,"events":True,"fatalities":True,
                     "displaced":True,"population_exposure":True,
-                    "country_priority_score":":.3f","iso_n3":False,"iso_a3":False
+                    "country_priority_score":":.3f",
+                    "health_priority_score":":.3f",
+                    "education_priority_score":":.3f",
+                    "iso_n3":False,"iso_a3":False
                 },
                 custom_data=["iso_a3","country_name_geo"],
                 mapbox_style="carto-positron",
@@ -3591,7 +3739,7 @@ if st.session_state["view"] == "world":
             unsafe_allow_html=True
         )
         top = world_pri.sort_values(metric, ascending=False).head(10).reset_index(drop=True)
-        pfmt = (lambda v: f"{v:.3f}") if metric == "country_priority_score" else fmt_big
+        pfmt = lambda v: format_metric_value(metric, v)
         render_top10_grid(top, "country", metric, fmt_fn=pfmt)
 
 # ──────────────────────────────────────────────────
@@ -3707,6 +3855,16 @@ else:
       <div class="dash-badge">{selected_iso3}</div>
     </div>
     """, unsafe_allow_html=True)
+
+    selected_country_priority_country_rows = get_country_admin_rows(
+        country_priority,
+        selected_country_name,
+    )
+    selected_country_priority_row = get_country_priority_period_row(
+        selected_country_priority_country_rows,
+        selected_year,
+        selected_month,
+    )
 
     if country_mode == "Conflict":
         avail_event_types = (
@@ -3927,6 +4085,8 @@ else:
           </div>
         </div>
         """, unsafe_allow_html=True)
+
+        render_country_need_detail(selected_country_name, selected_country_priority_row)
 
         if selected_metric in ["priority_score_country", "priority_score_global"]:
             cscale = SCALE_BLUE

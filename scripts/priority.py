@@ -4,6 +4,14 @@ import numpy as np
 import unicodedata
 import re
 
+from need_utils import (
+    build_education_score,
+    build_health_score,
+    clean_country_names,
+    load_need_data,
+    merge_need_scores,
+)
+
 # ==================================================
 # PATHS
 # ==================================================
@@ -28,6 +36,14 @@ output_country = output_dir / "global_priority_country_with_displacement_monthly
 # ==================================================
 MIN_YEAR = 2024
 MAX_YEAR = 2026
+COUNTRY_PRIORITY_WEIGHTS = {
+    "events_norm": 0.30,
+    "fatalities_norm": 0.30,
+    "displaced_norm": 0.18,
+    "exposure_norm": 0.07,
+    "health_priority_score": 0.075,
+    "education_priority_score": 0.075,
+}
 
 # ==================================================
 # HELPERS
@@ -48,37 +64,7 @@ def normalize_text(value):
 
 
 def standardize_country(value):
-    value = normalize_text(value)
-    if value is None:
-        return None
-
-    mapping = {
-        "lebanon": "lebanon",
-        "syrian arab republic": "syria",
-        "syria": "syria",
-        "turkiye": "turkey",
-        "turkey": "turkey",
-        "ukraine": "ukraine",
-        "russian federation": "russia",
-        "russia": "russia",
-        "united states of america": "united states of america",
-        "united states": "united states of america",
-        "usa": "united states of america",
-        "czech republic": "czechia",
-        "iran (islamic republic of)": "iran",
-        "venezuela, bolivarian republic of": "venezuela",
-        "bolivia (plurinational state of)": "bolivia",
-        "united republic of tanzania": "tanzania",
-        "republic of moldova": "moldova",
-        "lao people's democratic republic": "laos",
-        "state of palestine": "palestine",
-        "democratic republic of congo": "democratic republic of the congo",
-        "congo dem. rep.": "democratic republic of the congo",
-        "dr congo": "democratic republic of the congo",
-        "congo rep.": "republic of the congo",
-        "republic of the congo": "republic of the congo",
-    }
-    return mapping.get(value, value)
+    return clean_country_names(value)
 
 
 def standardize_admin1(value, country=None):
@@ -534,11 +520,28 @@ country_monthly["displaced_norm"] = (
     .transform(minmax)
 )
 
-country_monthly["country_priority_score"] = (
+# ==================================================
+# NEED DATA INTEGRATION
+# ==================================================
+need_data = load_need_data(valid_countries=country_monthly["country"].dropna().unique())
+health_scores = build_health_score(need_data["health"])
+education_scores = build_education_score(need_data["education"])
+country_monthly = merge_need_scores(country_monthly, health_scores, education_scores)
+
+country_monthly["country_priority_score_base"] = (
     0.35 * country_monthly["events_norm"] +
     0.35 * country_monthly["fatalities_norm"] +
     0.20 * country_monthly["displaced_norm"] +
     0.10 * country_monthly["exposure_norm"]
+)
+
+country_monthly["country_priority_score"] = (
+    COUNTRY_PRIORITY_WEIGHTS["events_norm"] * country_monthly["events_norm"] +
+    COUNTRY_PRIORITY_WEIGHTS["fatalities_norm"] * country_monthly["fatalities_norm"] +
+    COUNTRY_PRIORITY_WEIGHTS["displaced_norm"] * country_monthly["displaced_norm"] +
+    COUNTRY_PRIORITY_WEIGHTS["exposure_norm"] * country_monthly["exposure_norm"] +
+    COUNTRY_PRIORITY_WEIGHTS["health_priority_score"] * country_monthly["health_priority_score"] +
+    COUNTRY_PRIORITY_WEIGHTS["education_priority_score"] * country_monthly["education_priority_score"]
 )
 
 country_monthly["country_priority_rank"] = (
@@ -557,6 +560,40 @@ country_monthly = country_monthly.sort_values(
     ascending=[True, True, False, True]
 ).reset_index(drop=True)
 
+country_monthly = country_monthly[
+    [
+        "region",
+        "country",
+        "year",
+        "month_num",
+        "month",
+        "events",
+        "fatalities",
+        "population_exposure",
+        "displaced",
+        "events_log",
+        "fatalities_log",
+        "exposure_log",
+        "displaced_log",
+        "events_norm",
+        "fatalities_norm",
+        "exposure_norm",
+        "displaced_norm",
+        "country_priority_score_base",
+        "health_priority_score",
+        "health_source_year",
+        "health_indicator_count",
+        "health_data_available",
+        "education_priority_score",
+        "education_source_year",
+        "education_indicator_count",
+        "education_data_available",
+        "country_priority_score",
+        "country_priority_rank",
+        "country_priority_class",
+    ]
+]
+
 # ==================================================
 # SAVE
 # ==================================================
@@ -565,6 +602,16 @@ country_monthly.to_csv(output_country, index=False, encoding="utf-8-sig")
 
 print("Saved admin1 file:", output_admin1)
 print("Saved country file:", output_country)
+print("Need data directory:", need_data["need_dir"])
+print(
+    "Need rows loaded:",
+    {
+        "health": int(len(need_data["health"])),
+        "education": int(len(need_data["education"])),
+        "health_scores": int(len(health_scores)),
+        "education_scores": int(len(education_scores)),
+    },
+)
 
 print("\nAdmin1 sample:")
 print(admin1_monthly.head(10))
