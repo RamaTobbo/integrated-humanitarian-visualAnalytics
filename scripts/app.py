@@ -951,8 +951,13 @@ def load_country_admin1_boundary(iso3):
         gdf["admin_name"] = gdf[name_col].astype(str).str.strip()
         gdf["admin_name_norm"] = gdf["admin_name"].apply(lambda x: standardize_admin_name(x, country_name))
         gdf = gdf[gdf["admin_name_norm"].notna()].copy()
+        if gdf["admin_name_norm"].duplicated().any():
+            gdf = gdf[["admin_name_norm", "geometry"]].dissolve(by="admin_name_norm", as_index=False)
+            gdf = repair_geometries(gdf)
+            gdf["admin_name"] = gdf["admin_name_norm"].astype(str).str.replace("-", " ").str.title()
+            gdf["admin_name"] = gdf["admin_name"].str.replace("Baalbek Hermel", "Baalbek-Hermel", regex=False)
         gdf = gdf[["admin_name","admin_name_norm","geometry"]].copy()
-        return gdf, name_col
+        return gdf, "admin_name"
 
     if iso3 == "LBN" and lbn_admin2_fallback_path.exists():
         gdf = gpd.read_file(lbn_admin2_fallback_path)
