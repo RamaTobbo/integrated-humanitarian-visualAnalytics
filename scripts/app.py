@@ -336,25 +336,80 @@ hr { border-color: var(--border) !important; }
 
 [data-testid="stRadio"] > div {
     flex-direction: row !important;
-    gap: 8px !important;
+    gap: 6px !important;
+    padding: 4px !important;
+    border: 1px solid var(--border-bright) !important;
+    border-radius: 12px !important;
+    background: var(--bg-card) !important;
+    box-shadow: var(--shadow-sm) !important;
 }
 [data-testid="stRadio"] label {
-    border: 1px solid var(--border-bright) !important;
-    padding: 7px 16px !important;
+    border: 1px solid transparent !important;
+    padding: 9px 16px !important;
     cursor: pointer;
     font-weight: 500 !important;
     font-size: 12px !important;
     letter-spacing: 0.02em !important;
-    border-radius: 20px !important;
-    background: var(--bg-card) !important;
+    border-radius: 9px !important;
+    background: transparent !important;
     color: var(--text-secondary) !important;
     transition: all 0.15s ease;
 }
+[data-testid="stRadio"] label:hover {
+    border-color: var(--accent-soft) !important;
+    background: rgba(44, 74, 110, 0.06) !important;
+    color: var(--accent-ink) !important;
+}
 [data-testid="stRadio"] label:has(input:checked) {
     border-color: var(--accent) !important;
-    color: var(--accent) !important;
-    background: var(--accent-light) !important;
+    color: #ffffff !important;
+    background: var(--accent) !important;
     font-weight: 600 !important;
+    box-shadow: var(--shadow-sm) !important;
+}
+
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    gap: 8px !important;
+    border-bottom: none !important;
+    padding: 0 4px !important;
+}
+[data-testid="stTabs"] [data-baseweb="tab-border"] {
+    display: none !important;
+}
+[data-testid="stTabs"] button[role="tab"] {
+    height: auto !important;
+    min-height: 42px !important;
+    padding: 10px 16px !important;
+    border: 1px solid var(--border-bright) !important;
+    border-radius: 12px 12px 0 0 !important;
+    background: var(--bg-card) !important;
+    color: var(--text-secondary) !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.04em !important;
+    transition: all 0.15s ease !important;
+    box-shadow: var(--shadow-sm) !important;
+}
+[data-testid="stTabs"] button[role="tab"]:hover {
+    border-color: var(--accent-soft) !important;
+    color: var(--accent-ink) !important;
+    background: rgba(44, 74, 110, 0.05) !important;
+}
+[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+    border-color: var(--accent) !important;
+    background: var(--accent) !important;
+    color: #ffffff !important;
+    box-shadow: var(--shadow-md) !important;
+}
+[data-testid="stTabs"] [role="tabpanel"],
+[data-testid="stTabs"] [data-baseweb="tab-panel"] {
+    border: 1px solid var(--border) !important;
+    border-radius: 0 14px 14px 14px !important;
+    background: var(--bg-card) !important;
+    box-shadow: var(--shadow-sm) !important;
+    padding: 18px 18px 10px 18px !important;
+    margin-top: -1px !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -818,7 +873,7 @@ def render_bubble_story(selected_country_name, boundary_gdf):
         marker=dict(
             size=bdf["px_d"], sizemode="diameter",
             color=bdf["priority_score_country"],
-            colorscale=SCALE_BLUE, cmin=0.0, cmax=pri_max,
+            colorscale=SCALE_BUBBLE, cmin=0.0, cmax=pri_max,
             line=dict(width=1.5, color="rgba(255,255,255,0.5)"),
             opacity=0.87,
             colorbar=dict(
@@ -1169,6 +1224,7 @@ LIGHT_LAYOUT = dict(
 )
 
 SCALE_BLUE  = [[0,"#f4f7fb"],[0.25,"#d2dceb"],[0.5,"#8fa7c9"],[0.75,"#4f6c95"],[1,"#2c4a6e"]]
+SCALE_BUBBLE = [[0,"#dce8f4"],[0.25,"#b7cbe1"],[0.5,"#84a4c3"],[0.75,"#4e7098"],[1,"#1a2e48"]]
 SCALE_WARM  = [[0,"#fbf6f0"],[0.25,"#f2e0cc"],[0.5,"#dcb48a"],[0.75,"#b8703a"],[1,"#7a4418"]]
 SCALE_TEAL  = [[0,"#f1f7f5"],[0.25,"#d0e3dd"],[0.5,"#95bcb0"],[0.75,"#5a8a82"],[1,"#2e5652"]]
 SCALE_GOLD  = [[0,"#faf5ea"],[0.25,"#ecd9ad"],[0.5,"#c8a26a"],[0.75,"#a8864a"],[1,"#6e5727"]]
