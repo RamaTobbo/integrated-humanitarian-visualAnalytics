@@ -302,6 +302,14 @@ displacement["admin1_norm"] = displacement.apply(
     axis=1
 )
 
+# fix naming mismatches with ACLED
+displacement["admin1_norm"] = displacement["admin1_norm"].replace({
+    "baalbek-el hermel": "baalbek-hermel",
+    "baalbek el hermel": "baalbek-hermel",
+    "el nabatieh": "al nabatieh",
+    "nabatieh": "al nabatieh",
+})
+
 displacement["year"] = pd.to_numeric(displacement["year"], errors="coerce")
 displacement["month_num"] = pd.to_numeric(displacement["month_num"], errors="coerce")
 displacement["displaced_in"] = pd.to_numeric(displacement["displaced_in"], errors="coerce").fillna(0)

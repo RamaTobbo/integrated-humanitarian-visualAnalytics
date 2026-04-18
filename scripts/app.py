@@ -9,7 +9,6 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
 # ──────────────────────────────────────────────────
@@ -319,7 +318,7 @@ button[data-testid="baseButton-primary"]:hover {
     box-shadow: var(--shadow-sm);
 }
 
-#MainMenu, footer, header { visibility: hidden; }
+#MainMenu, footer{ visibility: hidden; }
 [data-testid="stToolbar"] { display: none; }
 
 hr { border-color: var(--border) !important; }
@@ -368,7 +367,7 @@ conflict_country_path    = BASE_DIR / "data" / "cleaned" / "global"     / "confl
 conflict_admin_path      = BASE_DIR / "data" / "cleaned" / "global"     / "conflict_standardized_monthlybytype.csv"
 priority_country_path    = BASE_DIR / "data" / "cleaned" / "global"     / "global_priority_country_with_displacement_monthly.csv"
 priority_admin1_path     = BASE_DIR / "data" / "cleaned" / "global"     / "global_priority_admin1_with_displacement_monthly.csv"
-displacement_dest_path   = BASE_DIR / "data" / "cleaned" / "global"     / "displacement_unified_allcountries_2024_2026.csv"
+displacement_dest_path   = BASE_DIR / "data" / "cleaned" / "global"     / "displacement_admin1_destination_monthly_2024_2026.csv"
 displacement_origin_path = BASE_DIR / "data" / "cleaned" / "global"     / "displacement_admin1_origin_monthly_2024_2026.csv"
 country_boundaries_dir   = BASE_DIR / "data" / "cleaned" / "boundaries" / "countries"
 lbn_admin2_fallback_path = BASE_DIR / "data" / "raw"     / "boundaries" / "geoBoundaries-LBN-ADM2.geojson"
@@ -609,20 +608,6 @@ def extract_selected_country_info(event):
         return str(location).strip().upper(), None
     return None, None
 
-def zoom_geo_to_gdf(fig, gdf, pad_ratio=0.15, min_pad=0.5):
-    if gdf is None or gdf.empty or "geometry" not in gdf.columns:
-        return
-    minx, miny, maxx, maxy = gdf.total_bounds
-    if pd.isna(minx) or pd.isna(miny) or pd.isna(maxx) or pd.isna(maxy):
-        return
-    padx = max((maxx - minx) * pad_ratio, min_pad)
-    pady = max((maxy - miny) * pad_ratio, min_pad)
-    fig.update_geos(
-        fitbounds="locations",
-        lonaxis_range=[max(-180.0, float(minx - padx)), min(180.0, float(maxx + padx))],
-        lataxis_range=[max(-89.0, float(miny - pady)), min(89.0, float(maxy + pady))],
-    )
-
 def resolve_clicked_country(clicked_id=None, clicked_name=None, fallback_name=None):
     clicked_id = str(clicked_id).strip().upper() if clicked_id else None
     iso3 = None
@@ -745,13 +730,21 @@ def render_top10_grid(df, name_col, val_col, fmt_fn=None):
         unsafe_allow_html=True,
     )
 
-LIGHT_MAP_LAYOUT = dict(
+def build_mapbox_center(gdf, default_lat=20, default_lon=10):
+    if gdf is None or gdf.empty or "geometry" not in gdf.columns:
+        return {"lat": default_lat, "lon": default_lon}
+    try:
+        rp = gdf.geometry.representative_point()
+        return {"lat": float(rp.y.mean()), "lon": float(rp.x.mean())}
+    except Exception:
+        return {"lat": default_lat, "lon": default_lon}
+
+LIGHT_LAYOUT = dict(
     paper_bgcolor="#ffffff",
     plot_bgcolor="#ffffff",
     font=dict(family="Inter", color="#5a6577", size=11),
     title=dict(font=dict(family="Playfair Display", size=16, color="#1b2230"), x=0.02, xanchor="left", y=0.97),
     margin=dict(l=0, r=0, t=50, b=0),
-    height=820,
 )
 
 SCALE_BLUE  = [[0,"#f4f7fb"],[0.25,"#d2dceb"],[0.5,"#8fa7c9"],[0.75,"#4f6c95"],[1,"#2c4a6e"]]
@@ -775,6 +768,10 @@ def load_country_conflict():
     df["year"] = pd.to_numeric(df["year"], errors="coerce")
     df["events"] = pd.to_numeric(df["events"], errors="coerce").fillna(0)
     df["fatalities"] = pd.to_numeric(df["fatalities"], errors="coerce").fillna(0)
+    if "population_exposure" in df.columns:
+        df["population_exposure"] = pd.to_numeric(df["population_exposure"], errors="coerce").fillna(0)
+    else:
+        df["population_exposure"] = 0
     if "month_num" not in df.columns:
         df["month_num"] = df["month"].map(MONTH_MAP)
     else:
@@ -797,6 +794,10 @@ def load_admin_conflict():
             df[col] = pd.to_numeric(df[col], errors="coerce")
     df["events"] = df["events"].fillna(0)
     df["fatalities"] = df["fatalities"].fillna(0)
+    if "population_exposure" not in df.columns:
+        df["population_exposure"] = 0
+    else:
+        df["population_exposure"] = df["population_exposure"].fillna(0)
     if "month_num" not in df.columns:
         df["month_num"] = df["month"].map(MONTH_MAP)
     df = df[df["year"].notna() & df["month"].notna() & df["month_num"].notna() &
@@ -841,7 +842,7 @@ def load_admin1_priority():
             df[col] = df[col].astype(str).str.strip()
     numeric_cols = [
         "year", "month_num", "events", "fatalities", "population_exposure", "displaced",
-        "centroid_latitude", "centroid_longitude",
+        "displaced_in", "displaced_from", "centroid_latitude", "centroid_longitude",
         "events_norm_country", "fatalities_norm_country", "displaced_norm_country", "exposure_norm_country",
         "priority_score_country", "priority_rank_country",
         "events_norm_global", "fatalities_norm_global", "displaced_norm_global", "exposure_norm_global",
@@ -864,10 +865,10 @@ def load_admin1_priority():
 @st.cache_data(show_spinner=False)
 def load_displacement_dest():
     if not displacement_dest_path.exists():
-        return pd.DataFrame(columns=["country", "country_name", "year", "month_num", "month", "admin1_norm", "displaced_in"])
+        return pd.DataFrame(columns=["country","country_name","year","month_num","month","admin1_norm","displaced_in"])
     df = pd.read_csv(displacement_dest_path)
     df["country"] = df["country"].apply(canonical_country_norm)
-    df["admin1_norm"] = df["admin1_norm"].apply(normalize_text)
+    df["admin1_norm"] = df.apply(lambda r: standardize_admin_name(r["admin1_norm"], r["country"]), axis=1)
     df["month"] = df["month"].astype(str).str.strip()
     df["year"] = pd.to_numeric(df["year"], errors="coerce")
     df["month_num"] = pd.to_numeric(df["month_num"], errors="coerce")
@@ -881,10 +882,10 @@ def load_displacement_dest():
 @st.cache_data(show_spinner=False)
 def load_displacement_origin():
     if not displacement_origin_path.exists():
-        return pd.DataFrame(columns=["country", "country_name", "year", "month_num", "month", "admin1_norm", "displaced_from"])
+        return pd.DataFrame(columns=["country","country_name","year","month_num","month","admin1_norm","displaced_from"])
     df = pd.read_csv(displacement_origin_path)
     df["country"] = df["country"].apply(canonical_country_norm)
-    df["admin1_norm"] = df["admin1_norm"].apply(normalize_text)
+    df["admin1_norm"] = df.apply(lambda r: standardize_admin_name(r["admin1_norm"], r["country"]), axis=1)
     df["month"] = df["month"].astype(str).str.strip()
     df["year"] = pd.to_numeric(df["year"], errors="coerce")
     df["month_num"] = pd.to_numeric(df["month_num"], errors="coerce")
@@ -999,7 +1000,9 @@ if "world_year" not in st.session_state or "world_month" not in st.session_state
 # SIDEBAR BRAND
 # ──────────────────────────────────────────────────
 st.sidebar.markdown("""
+<div class="sidebar-brand">
 
+</div>
 """, unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────────
@@ -1114,11 +1117,12 @@ if st.session_state["view"] == "world":
 
         country_period = (
             filtered.groupby(["iso_n3","country","country_norm"], as_index=False)
-            .agg({"events":"sum","fatalities":"sum"})
+            .agg({"events":"sum","fatalities":"sum","population_exposure":"sum"})
         )
         merged_w = world.merge(country_period, how="left", on=["iso_n3","country_norm"])
         merged_w["events"] = merged_w["events"].fillna(0)
         merged_w["fatalities"] = merged_w["fatalities"].fillna(0)
+        merged_w["population_exposure"] = merged_w["population_exposure"].fillna(0)
         merged_w["country"] = merged_w["country"].fillna(merged_w["country_name_geo"])
 
         total_ev = int(country_period["events"].sum())
@@ -1158,37 +1162,27 @@ if st.session_state["view"] == "world":
 
         if selected_country == "All":
             fig = px.choropleth_mapbox(
-    merged_w,
-    geojson=json.loads(merged_w.to_json()),
-    locations="iso_n3",
-    featureidkey="properties.iso_n3",
-    color=metric,
-    color_continuous_scale=cscale,
-    hover_name="country_name_geo",
-    hover_data={
-        "country": True,
-        "events": True,
-        "fatalities": True,
-        "iso_n3": False,
-        "iso_a3": False,
-    },
-    custom_data=["iso_a3", "country_name_geo"],
-    mapbox_style="carto-positron",
-    zoom=0.8,
-    center={"lat": 20, "lon": 10},
-    opacity=0.85,
-    title=f"{metric.capitalize()} — {selected_month} {selected_year}",
-)
-            fig.update_traces(marker_line_color="rgba(27,34,48,0.15)", marker_line_width=0.4)
+                merged_w,
+                geojson=json.loads(merged_w.to_json()),
+                locations="iso_n3",
+                featureidkey="properties.iso_n3",
+                color=metric,
+                color_continuous_scale=cscale,
+                hover_name="country_name_geo",
+                hover_data={
+                    "country":True,"events":True,"fatalities":True,
+                    "iso_n3":False,"iso_a3":False,
+                },
+                custom_data=["iso_a3","country_name_geo"],
+                mapbox_style="carto-positron",
+                zoom=0.8,
+                center={"lat": 20, "lon": 10},
+                opacity=0.85,
+                title=f"{metric.capitalize()} — {selected_month} {selected_year}",
+            )
             fig.update_layout(
-    mapbox_style="carto-positron",
-    margin=dict(l=0, r=0, t=50, b=0),
-    height=800,
-    paper_bgcolor="#ffffff",
-    plot_bgcolor="#ffffff",
-)
-            fig.update_layout(
-                **LIGHT_MAP_LAYOUT,
+                **LIGHT_LAYOUT,
+                height=800,
                 coloraxis_colorbar=dict(
                     title=metric.capitalize(),
                     tickfont=dict(family="Inter", size=10, color="#5a6577"),
@@ -1215,7 +1209,7 @@ if st.session_state["view"] == "world":
                 st.rerun()
         else:
             sgeo = merged_w[merged_w["country_norm"] == canonical_country_norm(selected_country)].copy()
-            fig = px.choropleth(
+            fig = px.choropleth_mapbox(
                 sgeo,
                 geojson=json.loads(sgeo.to_json()),
                 locations="iso_n3",
@@ -1228,19 +1222,15 @@ if st.session_state["view"] == "world":
                     "iso_n3":False,"iso_a3":False,
                 },
                 custom_data=["iso_a3","country_name_geo"],
-                projection="natural earth",
+                mapbox_style="carto-positron",
+                zoom=3.2,
+                center=build_mapbox_center(sgeo),
+                opacity=0.90,
                 title=f"{selected_country} — {metric.capitalize()}",
             )
-            fig.update_traces(marker_line_color="rgba(27,34,48,0.25)", marker_line_width=0.6)
-            fig.update_geos(
-                showcountries=True, showcoastlines=False, showframe=False,
-                bgcolor="#ffffff", showocean=True, oceancolor="#f4f7fb",
-                showland=True, landcolor="#fafbfd",
-                countrycolor="rgba(27,34,48,0.2)"
-            )
-            zoom_geo_to_gdf(fig, sgeo)
             fig.update_layout(
-                **{**LIGHT_MAP_LAYOUT, "height":500},
+                **LIGHT_LAYOUT,
+                height=800,
                 coloraxis_colorbar=dict(
                     title=metric.capitalize(),
                     tickfont=dict(family="Inter", size=10, color="#5a6577"),
@@ -1340,10 +1330,10 @@ if st.session_state["view"] == "world":
         </div>
         """, unsafe_allow_html=True)
 
-        cscale = SCALE_BLUE if metric == "country_priority_score" else SCALE_WARM
+        cscale = SCALE_BLUE if metric == "country_priority_score" else SCALE_WARM if metric == "fatalities" else SCALE_TEAL if metric == "displaced" else SCALE_GOLD if metric == "population_exposure" else SCALE_BLUE
 
         if selected_country == "All":
-            fig = px.choropleth(
+            fig = px.choropleth_mapbox(
                 merged_w,
                 geojson=json.loads(merged_w.to_json()),
                 locations="iso_n3",
@@ -1357,17 +1347,15 @@ if st.session_state["view"] == "world":
                     "country_priority_score":":.3f","iso_n3":False,"iso_a3":False
                 },
                 custom_data=["iso_a3","country_name_geo"],
-                projection="natural earth",
+                mapbox_style="carto-positron",
+                zoom=0.8,
+                center={"lat": 20, "lon": 10},
+                opacity=0.85,
                 title=f"{metric_label(metric)} — {selected_month} {selected_year}",
             )
-            fig.update_traces(marker_line_color="rgba(27,34,48,0.15)", marker_line_width=0.4)
-            fig.update_geos(
-                showcoastlines=False, showframe=False, bgcolor="#ffffff",
-                showocean=True, oceancolor="#f4f7fb",
-                showland=True, landcolor="#fafbfd"
-            )
             fig.update_layout(
-                **LIGHT_MAP_LAYOUT,
+                **LIGHT_LAYOUT,
+                height=800,
                 coloraxis_colorbar=dict(
                     title=metric_label(metric),
                     tickfont=dict(family="Inter", size=10, color="#5a6577"),
@@ -1395,7 +1383,7 @@ if st.session_state["view"] == "world":
                 st.rerun()
         else:
             sgeo = merged_w[merged_w["country_norm"] == canonical_country_norm(selected_country)].copy()
-            fig = px.choropleth(
+            fig = px.choropleth_mapbox(
                 sgeo,
                 geojson=json.loads(sgeo.to_json()),
                 locations="iso_n3",
@@ -1409,19 +1397,15 @@ if st.session_state["view"] == "world":
                     "country_priority_score":":.3f","iso_n3":False,"iso_a3":False
                 },
                 custom_data=["iso_a3","country_name_geo"],
-                projection="natural earth",
+                mapbox_style="carto-positron",
+                zoom=3.2,
+                center=build_mapbox_center(sgeo),
+                opacity=0.90,
                 title=f"{selected_country} — {metric_label(metric)}",
             )
-            fig.update_traces(marker_line_color="rgba(27,34,48,0.25)", marker_line_width=0.6)
-            fig.update_geos(
-                showcountries=True, showcoastlines=False, showframe=False,
-                bgcolor="#ffffff", showocean=True, oceancolor="#f4f7fb",
-                showland=True, landcolor="#fafbfd",
-                countrycolor="rgba(27,34,48,0.2)"
-            )
-            zoom_geo_to_gdf(fig, sgeo)
             fig.update_layout(
-                **{**LIGHT_MAP_LAYOUT, "height":500},
+                **LIGHT_LAYOUT,
+                height=800,
                 coloraxis_colorbar=dict(
                     title=metric_label(metric),
                     tickfont=dict(family="Inter", size=10, color="#5a6577"),
@@ -1618,7 +1602,7 @@ else:
 
         cscale = SCALE_BLUE if selected_metric == "events" else SCALE_WARM if selected_metric == "fatalities" else SCALE_GOLD
 
-        fig = px.choropleth(
+        fig = px.choropleth_mapbox(
             merged,
             geojson=json.loads(merged.to_json()),
             locations="admin_name_norm",
@@ -1630,18 +1614,15 @@ else:
                 "events":True,"fatalities":True,"population_exposure":True,
                 "admin_name_norm":False,
             },
-            projection="mercator",
+            mapbox_style="carto-positron",
+            center=build_mapbox_center(merged),
+            zoom=5.0,
+            opacity=0.88,
             title=f"{selected_country_name} — {metric_label(selected_metric)} by Admin1",
         )
-        fig.update_traces(marker_line_color="rgba(27,34,48,0.25)", marker_line_width=0.8)
-        fig.update_geos(
-            showcountries=False, showcoastlines=False, showframe=False,
-            bgcolor="#ffffff", showocean=False, showland=True,
-            landcolor="#fafbfd", fitbounds="locations",
-        )
-        zoom_geo_to_gdf(fig, merged)
         fig.update_layout(
-            **{**LIGHT_MAP_LAYOUT, "height":620},
+            **LIGHT_LAYOUT,
+            height=800,
             coloraxis_colorbar=dict(
                 title=metric_label(selected_metric),
                 tickfont=dict(family="Inter", size=10, color="#5a6577"),
@@ -1690,6 +1671,10 @@ else:
             agg_dict["priority_score_country"] = "mean"
         if "priority_score_global" in priority_slice.columns:
             agg_dict["priority_score_global"] = "mean"
+        if "displaced_in" in priority_slice.columns:
+            agg_dict["displaced_in"] = "sum"
+        if "displaced_from" in priority_slice.columns:
+            agg_dict["displaced_from"] = "sum"
 
         merged = boundary_gdf.merge(
             priority_slice.groupby("admin1_norm", as_index=False).agg(agg_dict),
@@ -1707,7 +1692,7 @@ else:
                 suffixes=("", "_dest")
             )
         else:
-            merged["displaced_in"] = 0
+            merged["displaced_in"] = merged.get("displaced_in", 0)
 
         if not disp_out_slice.empty:
             merged = merged.merge(
@@ -1718,7 +1703,7 @@ else:
                 suffixes=("", "_orig")
             )
         else:
-            merged["displaced_from"] = 0
+            merged["displaced_from"] = merged.get("displaced_from", 0)
 
         for col in ["events","fatalities","displaced","population_exposure","priority_score_country",
                     "priority_score_global","displaced_in","displaced_from"]:
@@ -1766,7 +1751,7 @@ else:
             cscale = SCALE_TEAL
             fmt_fn = fmt_big
 
-        fig = px.choropleth(
+        fig = px.choropleth_mapbox(
             merged,
             geojson=json.loads(merged.to_json()),
             locations="admin_name_norm",
@@ -1780,18 +1765,15 @@ else:
                 "priority_score_global":":.3f","displaced_in":True,
                 "displaced_from":True,"admin_name_norm":False,
             },
-            projection="mercator",
+            mapbox_style="carto-positron",
+            center=build_mapbox_center(merged),
+            zoom=5.0,
+            opacity=0.88,
             title=f"{selected_country_name} — {metric_label(selected_metric)} by Admin1",
         )
-        fig.update_traces(marker_line_color="rgba(27,34,48,0.25)", marker_line_width=0.8)
-        fig.update_geos(
-            showcountries=False, showcoastlines=False, showframe=False,
-            bgcolor="#ffffff", showocean=False, showland=True,
-            landcolor="#fafbfd", fitbounds="locations",
-        )
-        zoom_geo_to_gdf(fig, merged)
         fig.update_layout(
-            **{**LIGHT_MAP_LAYOUT, "height":620},
+            **LIGHT_LAYOUT,
+            height=800,
             coloraxis_colorbar=dict(
                 title=metric_label(selected_metric),
                 tickfont=dict(family="Inter", size=10, color="#5a6577"),
