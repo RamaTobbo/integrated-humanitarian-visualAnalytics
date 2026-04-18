@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 # ──────────────────────────────────────────────────
-# PAGE CONFIG & GLOBAL STYLE  (ACLED-inspired: soft, fancy, light)
+# PAGE CONFIG & GLOBAL STYLE
 # ──────────────────────────────────────────────────
 st.set_page_config(
     page_title="Conflict & Priority Intelligence Dashboard",
@@ -23,10 +23,8 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-/* ── Google Fonts ── */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
-/* ── Root palette (soft, editorial) ── */
 :root {
     --bg-base:        #f7f8fa;
     --bg-panel:       #ffffff;
@@ -36,16 +34,16 @@ st.markdown("""
     --border:         #e4e8ef;
     --border-bright:  #d3dae4;
 
-    --accent:         #2c4a6e;      /* deep editorial navy (ACLED-ish) */
+    --accent:         #2c4a6e;
     --accent-soft:    #5a7aa0;
     --accent-light:   #e8eef6;
     --accent-ink:     #1a2e48;
 
-    --hl-warm:        #b8703a;       /* soft terracotta for "danger" */
+    --hl-warm:        #b8703a;
     --hl-warm-soft:   #f4e5d6;
-    --hl-teal:        #5a8a82;       /* muted teal */
+    --hl-teal:        #5a8a82;
     --hl-teal-soft:   #e2eeec;
-    --hl-gold:        #a8864a;       /* subdued gold */
+    --hl-gold:        #a8864a;
     --hl-gold-soft:   #f2ead8;
 
     --text-primary:   #1b2230;
@@ -58,7 +56,6 @@ st.markdown("""
     --shadow-lg:      0 6px 24px rgba(20, 30, 50, 0.08);
 }
 
-/* ── Base ── */
 html, body, [data-testid="stAppViewContainer"] {
     background-color: var(--bg-base) !important;
     font-family: 'Inter', sans-serif;
@@ -73,7 +70,6 @@ html, body, [data-testid="stAppViewContainer"] {
 }
 [data-testid="stSidebar"] * { color: var(--text-primary) !important; }
 
-/* ── Sidebar brand ── */
 .sidebar-brand {
     padding: 22px 4px 18px 4px;
     border-bottom: 1px solid var(--border);
@@ -114,7 +110,6 @@ html, body, [data-testid="stAppViewContainer"] {
     margin-top: 3px;
 }
 
-/* ── Section headers inside sidebar ── */
 .sidebar-section {
     font-family: 'Inter', sans-serif;
     font-weight: 600;
@@ -127,7 +122,6 @@ html, body, [data-testid="stAppViewContainer"] {
     border-bottom: 1px solid var(--border);
 }
 
-/* ── Main header ── */
 .dash-header {
     display: flex;
     align-items: flex-end;
@@ -167,7 +161,6 @@ html, body, [data-testid="stAppViewContainer"] {
     background: var(--accent-light);
 }
 
-/* ── KPI cards ── */
 .kpi-row { display: flex; gap: 14px; margin-bottom: 26px; }
 .kpi-card {
     flex: 1;
@@ -220,7 +213,6 @@ html, body, [data-testid="stAppViewContainer"] {
     margin-top: 6px;
 }
 
-/* ── Section titles ── */
 .section-title {
     font-family: 'Playfair Display', serif;
     font-weight: 600;
@@ -245,7 +237,6 @@ html, body, [data-testid="stAppViewContainer"] {
     flex-shrink: 0;
 }
 
-/* ── Streamlit widget overrides ── */
 div[data-baseweb="select"] > div,
 div[data-baseweb="select"] div[role="combobox"] {
     background-color: var(--bg-card) !important;
@@ -296,7 +287,6 @@ button[data-testid="baseButton-primary"]:hover {
     box-shadow: var(--shadow-md) !important;
 }
 
-/* ── Dataframe ── */
 [data-testid="stDataFrame"] {
     border: 1px solid var(--border) !important;
     border-radius: 12px !important;
@@ -320,7 +310,6 @@ button[data-testid="baseButton-primary"]:hover {
     color: var(--text-primary) !important;
 }
 
-/* ── Alerts ── */
 [data-testid="stAlert"] {
     background: var(--bg-card) !important;
     border: 1px solid var(--border) !important;
@@ -330,14 +319,11 @@ button[data-testid="baseButton-primary"]:hover {
     box-shadow: var(--shadow-sm);
 }
 
-/* ── Hide default Streamlit chrome ── */
 #MainMenu, footer, header { visibility: hidden; }
 [data-testid="stToolbar"] { display: none; }
 
-/* ── Divider ── */
 hr { border-color: var(--border) !important; }
 
-/* ── Plot containers ── */
 [data-testid="stPlotlyChart"] {
     border: 1px solid var(--border);
     border-radius: 14px;
@@ -347,16 +333,6 @@ hr { border-color: var(--border) !important; }
     overflow: hidden;
 }
 
-/* ── Caption ── */
-[data-testid="stCaptionContainer"],
-[data-testid="stCaption"] {
-    font-family: 'Inter', sans-serif !important;
-    font-size: 11px !important;
-    color: var(--text-dim) !important;
-    letter-spacing: 0.02em !important;
-}
-
-/* ── Radio pills ── */
 [data-testid="stRadio"] > div {
     flex-direction: row !important;
     gap: 8px !important;
@@ -379,22 +355,6 @@ hr { border-color: var(--border) !important; }
     background: var(--accent-light) !important;
     font-weight: 600 !important;
 }
-
-/* ── Side panel right-rail (for data cards) ── */
-.side-panel {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 18px;
-    box-shadow: var(--shadow-sm);
-}
-.side-panel h4 {
-    font-family: 'Inter', sans-serif;
-    font-weight: 600;
-    font-size: 13px;
-    color: var(--text-primary);
-    margin: 0 0 12px 0;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -403,15 +363,15 @@ hr { border-color: var(--border) !important; }
 # ──────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-world_geojson_path      = BASE_DIR / "data" / "raw"     / "boundaries" / "world_countries.geojson"
-conflict_country_path   = BASE_DIR / "data" / "cleaned" / "global"     / "conflict_country_monthlybytype.csv"
-conflict_admin_path     = BASE_DIR / "data" / "cleaned" / "global"     / "conflict_standardized_monthlybytype.csv"
-priority_country_path   = BASE_DIR / "data" / "cleaned" / "global"     / "global_priority_country_with_displacement_monthly.csv"
-priority_admin1_path    = BASE_DIR / "data" / "cleaned" / "global"     / "global_priority_admin1_with_displacement_monthly.csv"
-displacement_dest_path  = BASE_DIR / "data" / "cleaned" / "global"     / "displacement_admin1_destination_monthly_2024_2026.csv"
-displacement_origin_path= BASE_DIR / "data" / "cleaned" / "global"     / "displacement_admin1_origin_monthly_2024_2026.csv"
-country_boundaries_dir  = BASE_DIR / "data" / "cleaned" / "boundaries" / "countries"
-lbn_admin2_fallback_path= BASE_DIR / "data" / "raw"     / "boundaries" / "geoBoundaries-LBN-ADM2.geojson"
+world_geojson_path       = BASE_DIR / "data" / "raw"     / "boundaries" / "world_countries.geojson"
+conflict_country_path    = BASE_DIR / "data" / "cleaned" / "global"     / "conflict_country_monthlybytype.csv"
+conflict_admin_path      = BASE_DIR / "data" / "cleaned" / "global"     / "conflict_standardized_monthlybytype.csv"
+priority_country_path    = BASE_DIR / "data" / "cleaned" / "global"     / "global_priority_country_with_displacement_monthly.csv"
+priority_admin1_path     = BASE_DIR / "data" / "cleaned" / "global"     / "global_priority_admin1_with_displacement_monthly.csv"
+displacement_dest_path   = BASE_DIR / "data" / "cleaned" / "global"     / "displacement_admin1_destination_monthly_2024_2026.csv"
+displacement_origin_path = BASE_DIR / "data" / "cleaned" / "global"     / "displacement_admin1_origin_monthly_2024_2026.csv"
+country_boundaries_dir   = BASE_DIR / "data" / "cleaned" / "boundaries" / "countries"
+lbn_admin2_fallback_path = BASE_DIR / "data" / "raw"     / "boundaries" / "geoBoundaries-LBN-ADM2.geojson"
 
 # ──────────────────────────────────────────────────
 # CONSTANTS
@@ -496,18 +456,21 @@ KEEP_SUFFIX_EXACT = {"moscow oblast","kyiv oblast","odessa oblast"}
 # HELPERS
 # ──────────────────────────────────────────────────
 def normalize_text(value):
-    if pd.isna(value): return None
+    if pd.isna(value):
+        return None
     value = str(value).strip().lower()
     value = unicodedata.normalize("NFKD", value)
     value = "".join(ch for ch in value if not unicodedata.combining(ch))
     value = value.replace("–","-").replace("—","-").replace("_"," ")
-    value = value.replace("/"," ").replace(","," ").replace("'","'")
+    value = value.replace("/"," ").replace(","," ").replace("’","'")
     value = re.sub(r"\s+"," ",value).strip()
     return value
 
 def strip_generic_suffixes(value):
-    if value is None: return None
-    if value in KEEP_SUFFIX_EXACT: return value
+    if value is None:
+        return None
+    if value in KEEP_SUFFIX_EXACT:
+        return value
     out = value
     for pattern in GENERIC_SUFFIX_PATTERNS:
         out = re.sub(pattern,"",out).strip()
@@ -515,13 +478,15 @@ def strip_generic_suffixes(value):
 
 def canonical_country_norm(name):
     n = normalize_text(name)
-    if n is None: return None
+    if n is None:
+        return None
     return COUNTRY_CANONICAL_ALIASES.get(n, n)
 
 def standardize_admin_name(value, country=None):
     value   = normalize_text(value)
     country = canonical_country_norm(country)
-    if value is None or value in NON_ADMIN_LOCATIONS: return None
+    if value is None or value in NON_ADMIN_LOCATIONS:
+        return None
 
     pre = {
         "kyiv city":"kyiv","odesa":"odessa","oddesa":"odessa",
@@ -533,6 +498,7 @@ def standardize_admin_name(value, country=None):
     }
     value = pre.get(value, value)
     value = strip_generic_suffixes(value)
+
     post = {
         "crimea":"autonomous republic of crimea","kyiv city":"kyiv",
         "odesa":"odessa","oddesa":"odessa","nabatyeh":"al nabatieh",
@@ -582,92 +548,140 @@ def default_latest_period(df):
 def default_latest_period_with_year_bounds(df, min_year=MIN_YEAR, max_year=MAX_YEAR):
     temp = df[["year","month_num","month"]].drop_duplicates().sort_values(["year","month_num"])
     temp = temp[(temp["year"]>=min_year)&(temp["year"]<=max_year)].copy()
-    if temp.empty: return default_latest_period(df)
+    if temp.empty:
+        return default_latest_period(df)
     last = temp.iloc[-1]
     return int(last["year"]), str(last["month"])
 
 def ensure_required_files():
-    required = [world_geojson_path, conflict_country_path, conflict_admin_path,
-                priority_country_path, priority_admin1_path]
+    required = [
+        world_geojson_path, conflict_country_path, conflict_admin_path,
+        priority_country_path, priority_admin1_path
+    ]
     missing = [str(p) for p in required if not p.exists()]
     if missing:
         st.error("Missing files:\n" + "\n".join(missing))
         st.stop()
 
 def filter_event_type(df, selected):
-    if selected == "All": return df.copy()
-    return df[df["event_type"]==selected].copy()
-
-def add_line_geometry(fig, geom, color="#1b2230", width=0.6):
-    if geom is None or geom.is_empty: return
-    if geom.geom_type == "LineString":
-        x, y = geom.xy
-        fig.add_trace(go.Scattergeo(lon=list(x), lat=list(y), mode="lines",
-            line=dict(color=color, width=width), hoverinfo="skip", showlegend=False))
-    elif geom.geom_type == "MultiLineString":
-        for part in geom.geoms:
-            x, y = part.xy
-            fig.add_trace(go.Scattergeo(lon=list(x), lat=list(y), mode="lines",
-                line=dict(color=color, width=width), hoverinfo="skip", showlegend=False))
-
-def add_boundaries(fig, gdf, color="rgba(27,34,48,0.22)", width=0.5):
-    for geom in gdf.boundary:
-        add_line_geometry(fig, geom, color=color, width=width)
-
-def add_country_outline(fig, gdf, color="rgba(27,34,48,0.6)", width=1.6):
-    outline = gdf.union_all().boundary if hasattr(gdf,"union_all") else gdf.unary_union.boundary
-    add_line_geometry(fig, outline, color=color, width=width)
+    if selected == "All":
+        return df.copy()
+    return df[df["event_type"] == selected].copy()
 
 def repair_geometries(gdf):
     gdf = gdf.copy()
     gdf = gdf[gdf.geometry.notna()].copy()
     gdf = gdf[~gdf.geometry.is_empty].copy()
-    try: gdf["geometry"] = gdf["geometry"].buffer(0)
-    except: pass
+    try:
+        gdf["geometry"] = gdf["geometry"].buffer(0)
+    except Exception:
+        pass
     gdf = gdf[gdf.geometry.notna()].copy()
     gdf = gdf[~gdf.geometry.is_empty].copy()
     return gdf
 
-def extract_selected_country_info(event):
-    if event is None: return None, None
-    try:
-        if isinstance(event, dict):
-            points = event.get("selection",{}).get("points",[])
-        else:
-            sel = getattr(event,"selection",{})
-            points = sel.get("points",[]) if isinstance(sel,dict) else []
-    except: return None, None
-    if not points: return None, None
-    point = points[0]
-    custom = point.get("customdata",[])
-    if custom and len(custom) >= 2:
-        return str(custom[0]).strip().upper(), str(custom[1]).strip()
-    loc = point.get("location")
-    if loc: return str(loc).strip().upper(), None
-    return None, None
-
 def detect_name_column(gdf):
     for col in ["shapeName","shapeName_en","admin1Name","ADM1_EN","adm1_en",
                 "NAME_1","name_1","province","region","state","admin1","name"]:
-        if col in gdf.columns: return col
+        if col in gdf.columns:
+            return col
     return None
 
-def build_country_alias_lookup():
-    lookup = {}
-    for canonical, names in COUNTRY_NAME_ALIASES.items():
-        all_names = [canonical] + names
-        normalized = [normalize_text(x) for x in all_names]
-        canonical_norm = normalize_text(canonical)
-        for name in normalized:
-            lookup[name] = canonical_norm
-    return lookup
+def extract_selected_country_info(event):
+    if event is None:
+        return None, None
+    try:
+        if isinstance(event, dict):
+            points = event.get("selection", {}).get("points", [])
+        else:
+            sel = getattr(event, "selection", {})
+            points = sel.get("points", []) if isinstance(sel, dict) else []
+    except Exception:
+        return None, None
+    if not points:
+        return None, None
+    point = points[0]
+    custom = point.get("customdata", [])
+    if custom and len(custom) >= 2:
+        return str(custom[0]).strip().upper(), str(custom[1]).strip()
+    location = point.get("location")
+    if location:
+        return str(location).strip().upper(), None
+    return None, None
 
-ALIAS_LOOKUP = build_country_alias_lookup()
+def zoom_geo_to_gdf(fig, gdf, pad_ratio=0.15, min_pad=0.5):
+    if gdf is None or gdf.empty or "geometry" not in gdf.columns:
+        return
+    minx, miny, maxx, maxy = gdf.total_bounds
+    if pd.isna(minx) or pd.isna(miny) or pd.isna(maxx) or pd.isna(maxy):
+        return
+    padx = max((maxx - minx) * pad_ratio, min_pad)
+    pady = max((maxy - miny) * pad_ratio, min_pad)
+    fig.update_geos(
+        fitbounds="locations",
+        lonaxis_range=[max(-180.0, float(minx - padx)), min(180.0, float(maxx + padx))],
+        lataxis_range=[max(-89.0, float(miny - pady)), min(89.0, float(maxy + pady))],
+    )
+
+def resolve_clicked_country(clicked_id=None, clicked_name=None, fallback_name=None):
+    clicked_id = str(clicked_id).strip().upper() if clicked_id else None
+    iso3 = None
+    world_match = world.iloc[0:0].copy()
+
+    if clicked_id:
+        if len(clicked_id) == 3 and clicked_id.isalpha():
+            iso3 = clicked_id
+            world_match = world[world["iso_a3"] == iso3]
+        else:
+            iso_n3 = clicked_id.zfill(3) if clicked_id.isdigit() else clicked_id
+            world_match = world[(world["iso_n3"] == iso_n3) | (world["iso_a3"] == clicked_id)]
+            if not world_match.empty:
+                iso3 = str(world_match["iso_a3"].iloc[0]).strip().upper()
+
+    if world_match.empty:
+        for name in [clicked_name, fallback_name]:
+            cnorm = canonical_country_norm(name)
+            if cnorm is None:
+                continue
+            world_match = world[world["country_norm"] == cnorm]
+            if not world_match.empty:
+                iso3 = str(world_match["iso_a3"].iloc[0]).strip().upper()
+                break
+
+    if iso3 is None:
+        return None, None
+
+    if world_match.empty:
+        world_match = world[world["iso_a3"] == iso3]
+
+    country_norm = world_match["country_norm"].iloc[0] if not world_match.empty else None
+    if country_norm is None:
+        country_norm = canonical_country_norm(clicked_name) or canonical_country_norm(fallback_name)
+
+    resolved_name = None
+    for df_name in ["admin_conflict", "admin1_priority", "country_conflict", "country_priority"]:
+        df = globals().get(df_name)
+        if df is None or "country_norm" not in df.columns or "country" not in df.columns or country_norm is None:
+            continue
+        matches = df[df["country_norm"] == country_norm]
+        if not matches.empty:
+            resolved_name = str(matches["country"].dropna().astype(str).str.strip().iloc[0])
+            break
+
+    if resolved_name is None and clicked_name:
+        resolved_name = str(clicked_name).strip()
+    if resolved_name is None and fallback_name:
+        resolved_name = str(fallback_name).strip()
+    if resolved_name is None and not world_match.empty:
+        resolved_name = str(world_match["country_name_geo"].iloc[0]).strip()
+
+    return iso3, resolved_name
 
 def get_country_admin_rows(admin_df, selected_country_name):
     country_norm = canonical_country_norm(selected_country_name)
-    out = admin_df[admin_df["country_norm"]==country_norm].copy()
-    if not out.empty: return out
+    out = admin_df[admin_df["country_norm"] == country_norm].copy()
+    if not out.empty:
+        return out
     aliases = COUNTRY_NAME_ALIASES.get(selected_country_name, [selected_country_name])
     alias_norms = [canonical_country_norm(x) for x in aliases]
     return admin_df[admin_df["country_norm"].isin(alias_norms)].copy()
@@ -682,21 +696,27 @@ def metric_label(metric):
     }.get(metric, metric)
 
 def fmt_big(n):
-    try: n = float(n)
-    except: return "—"
-    if n >= 1_000_000: return f"{n/1_000_000:.1f}M"
-    if n >= 1_000:     return f"{n/1_000:.1f}K"
+    try:
+        n = float(n)
+    except Exception:
+        return "—"
+    if n >= 1_000_000:
+        return f"{n/1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n/1_000:.1f}K"
     return f"{n:,.0f}"
 
 def render_top10_grid(df, name_col, val_col, fmt_fn=None):
     items = df[[name_col, val_col]].reset_index(drop=True)
-    if items.empty: return
+    if items.empty:
+        return
     max_val = float(items[val_col].max()) if not items.empty else 1.0
-    if max_val <= 0: max_val = 1.0
+    if max_val <= 0:
+        max_val = 1.0
     r1,g1,b1 = 0x1b,0x22,0x30
     r2,g2,b2 = 0xb0,0xb9,0xc7
     n = len(items)
-    default_fmt = fmt_fn or (lambda v: f"{v:.3f}" if max_val < 10 else (lambda v: fmt_big(v))(v))
+    default_fmt = fmt_fn or (lambda v: f"{v:.3f}" if max_val < 10 else fmt_big(v))
     cards = []
     for i, row in items.iterrows():
         rank = i + 1
@@ -709,10 +729,10 @@ def render_top10_grid(df, name_col, val_col, fmt_fn=None):
         val_str = default_fmt(val)
         cards.append(f'''<div style="background:#fff;border:1px solid #e4e8ef;border-radius:12px;padding:14px 16px;box-shadow:0 1px 2px rgba(20,30,50,.04);">
   <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:8px;">
-    <span style="font-family:\'Playfair Display\',serif;font-size:22px;font-weight:700;color:{rank_color};line-height:1;flex-shrink:0;min-width:26px;text-align:right;">{rank}</span>
+    <span style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:{rank_color};line-height:1;flex-shrink:0;min-width:26px;text-align:right;">{rank}</span>
     <div style="flex:1;min-width:0;">
-      <div style="font-family:\'Inter\',sans-serif;font-size:13px;font-weight:600;color:#1b2230;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{name}">{name}</div>
-      <div style="font-family:\'JetBrains Mono\',monospace;font-size:12px;font-weight:500;color:#5a6577;margin-top:2px;">{val_str}</div>
+      <div style="font-family:'Inter',sans-serif;font-size:13px;font-weight:600;color:#1b2230;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{name}">{name}</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:500;color:#5a6577;margin-top:2px;">{val_str}</div>
     </div>
   </div>
   <div style="height:3px;background:#eef1f6;border-radius:2px;overflow:hidden;">
@@ -725,30 +745,15 @@ def render_top10_grid(df, name_col, val_col, fmt_fn=None):
         unsafe_allow_html=True,
     )
 
-# ──────────────────────────────────────────────────
-# PLOTLY LIGHT TEMPLATE  (soft, ACLED-like)
-# ──────────────────────────────────────────────────
 LIGHT_MAP_LAYOUT = dict(
     paper_bgcolor="#ffffff",
     plot_bgcolor="#ffffff",
     font=dict(family="Inter", color="#5a6577", size=11),
     title=dict(font=dict(family="Playfair Display", size=16, color="#1b2230"), x=0.02, xanchor="left", y=0.97),
     margin=dict(l=0, r=0, t=50, b=0),
-    height=620,
+    height=820,
 )
 
-def light_geo_layout(lonrange=None, latrange=None, height=660):
-    base = dict(
-        visible=False,
-        bgcolor="#ffffff",
-        showland=False, showcountries=False, showcoastlines=False,
-        showocean=False, showlakes=False, showrivers=False,
-    )
-    if lonrange: base["lonaxis_range"] = lonrange
-    if latrange: base["lataxis_range"] = latrange
-    return base
-
-# ── Soft, refined diverging scales (ACLED-like blues + warm accents)
 SCALE_BLUE  = [[0,"#f4f7fb"],[0.25,"#d2dceb"],[0.5,"#8fa7c9"],[0.75,"#4f6c95"],[1,"#2c4a6e"]]
 SCALE_WARM  = [[0,"#fbf6f0"],[0.25,"#f2e0cc"],[0.5,"#dcb48a"],[0.75,"#b8703a"],[1,"#7a4418"]]
 SCALE_TEAL  = [[0,"#f1f7f5"],[0.25,"#d0e3dd"],[0.5,"#95bcb0"],[0.75,"#5a8a82"],[1,"#2e5652"]]
@@ -774,79 +779,92 @@ def load_country_conflict():
         df["month_num"] = df["month"].map(MONTH_MAP)
     else:
         df["month_num"] = pd.to_numeric(df["month_num"], errors="coerce")
-    df = df[df["year"].notna()&df["month"].notna()&df["month_num"].notna()&
-            df["country"].notna()&df["event_type"].notna()].copy()
+    df = df[df["year"].notna() & df["month"].notna() & df["month_num"].notna() &
+            df["country"].notna() & df["event_type"].notna()].copy()
     df["year"] = df["year"].astype(int)
     df["month_num"] = df["month_num"].astype(int)
-    df = df[(df["year"]>=MIN_YEAR)&(df["year"]<=MAX_YEAR)].copy()
+    df = df[(df["year"] >= MIN_YEAR) & (df["year"] <= MAX_YEAR)].copy()
     return df
 
 @st.cache_data(show_spinner=False)
 def load_admin_conflict():
     df = pd.read_csv(conflict_admin_path)
-    for col in ["country","admin1","admin2","month","event_type"]:
-        if col in df.columns: df[col] = df[col].astype(str).str.strip()
-    for col in ["year","month_num","events","fatalities","population_exposure"]:
-        if col in df.columns: df[col] = pd.to_numeric(df[col], errors="coerce")
+    for col in ["country", "admin1", "admin2", "month", "event_type"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+    for col in ["year", "month_num", "events", "fatalities", "population_exposure"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
     df["events"] = df["events"].fillna(0)
     df["fatalities"] = df["fatalities"].fillna(0)
-    if "month_num" not in df.columns: df["month_num"] = df["month"].map(MONTH_MAP)
-    df = df[df["year"].notna()&df["month"].notna()&df["month_num"].notna()&
-            df["country"].notna()&df["event_type"].notna()&df["admin1"].notna()].copy()
+    if "month_num" not in df.columns:
+        df["month_num"] = df["month"].map(MONTH_MAP)
+    df = df[df["year"].notna() & df["month"].notna() & df["month_num"].notna() &
+            df["country"].notna() & df["event_type"].notna() & df["admin1"].notna()].copy()
     df["year"] = df["year"].astype(int)
     df["month_num"] = df["month_num"].astype(int)
     df["country_norm"] = df["country"].apply(canonical_country_norm)
-    df["admin1_norm"] = df.apply(lambda r: standardize_admin_name(r["admin1"],r["country"]), axis=1)
+    df["admin1_norm"] = df.apply(lambda row: standardize_admin_name(row["admin1"], row["country"]), axis=1)
     df = df[df["admin1_norm"].notna()].copy()
-    df = df[(df["year"]>=MIN_YEAR)&(df["year"]<=MAX_YEAR)].copy()
+    df = df[(df["year"] >= MIN_YEAR) & (df["year"] <= MAX_YEAR)].copy()
     return df
 
 @st.cache_data(show_spinner=False)
 def load_country_priority():
     df = pd.read_csv(priority_country_path)
-    for col in ["region","country","month","country_priority_class"]:
-        if col in df.columns: df[col] = df[col].astype(str).str.strip()
-    for col in ["year","month_num","events","fatalities","population_exposure","displaced",
-                "events_log","fatalities_log","exposure_log","displaced_log",
-                "events_norm","fatalities_norm","exposure_norm","displaced_norm",
-                "country_priority_score","country_priority_rank"]:
-        if col in df.columns: df[col] = pd.to_numeric(df[col], errors="coerce")
+    for col in ["region", "country", "month", "country_priority_class"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+    numeric_cols = [
+        "year", "month_num", "events", "fatalities", "population_exposure", "displaced",
+        "events_log", "fatalities_log", "exposure_log", "displaced_log",
+        "events_norm", "fatalities_norm", "exposure_norm", "displaced_norm",
+        "country_priority_score", "country_priority_rank",
+    ]
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
     df["country"] = df["country"].astype(str).str.strip()
     df["country_norm"] = df["country"].apply(canonical_country_norm)
     df["month"] = df["month"].astype(str).str.strip()
-    df = df[df["year"].notna()&df["month"].notna()&df["month_num"].notna()&df["country"].notna()].copy()
+    df = df[df["year"].notna() & df["month"].notna() & df["month_num"].notna() & df["country"].notna()].copy()
     df["year"] = df["year"].astype(int)
     df["month_num"] = df["month_num"].astype(int)
-    df = df[(df["year"]>=MIN_YEAR)&(df["year"]<=MAX_YEAR)].copy()
+    df = df[(df["year"] >= MIN_YEAR) & (df["year"] <= MAX_YEAR)].copy()
     return df
 
 @st.cache_data(show_spinner=False)
 def load_admin1_priority():
     df = pd.read_csv(priority_admin1_path)
-    for col in ["region","country","admin1_norm","month","priority_class_country","priority_class_global"]:
-        if col in df.columns: df[col] = df[col].astype(str).str.strip()
-    for col in ["year","month_num","events","fatalities","population_exposure","displaced",
-                "centroid_latitude","centroid_longitude",
-                "events_norm_country","fatalities_norm_country","displaced_norm_country","exposure_norm_country",
-                "priority_score_country","priority_rank_country",
-                "events_norm_global","fatalities_norm_global","displaced_norm_global","exposure_norm_global",
-                "priority_score_global","priority_rank_global"]:
-        if col in df.columns: df[col] = pd.to_numeric(df[col], errors="coerce")
+    for col in ["region", "country", "admin1_norm", "month", "priority_class_country", "priority_class_global"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+    numeric_cols = [
+        "year", "month_num", "events", "fatalities", "population_exposure", "displaced",
+        "centroid_latitude", "centroid_longitude",
+        "events_norm_country", "fatalities_norm_country", "displaced_norm_country", "exposure_norm_country",
+        "priority_score_country", "priority_rank_country",
+        "events_norm_global", "fatalities_norm_global", "displaced_norm_global", "exposure_norm_global",
+        "priority_score_global", "priority_rank_global",
+    ]
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
     df["country"] = df["country"].astype(str).str.strip()
     df["country_norm"] = df["country"].apply(canonical_country_norm)
-    df["admin1_norm"] = df.apply(lambda r: standardize_admin_name(r["admin1_norm"],r["country"]), axis=1)
+    df["admin1_norm"] = df.apply(lambda row: standardize_admin_name(row["admin1_norm"], row["country"]), axis=1)
     df["month"] = df["month"].astype(str).str.strip()
-    df = df[df["year"].notna()&df["month"].notna()&df["month_num"].notna()&
-            df["country"].notna()&df["admin1_norm"].notna()].copy()
+    df = df[df["year"].notna() & df["month"].notna() & df["month_num"].notna() &
+            df["country"].notna() & df["admin1_norm"].notna()].copy()
     df["year"] = df["year"].astype(int)
     df["month_num"] = df["month_num"].astype(int)
-    df = df[(df["year"]>=MIN_YEAR)&(df["year"]<=MAX_YEAR)].copy()
+    df = df[(df["year"] >= MIN_YEAR) & (df["year"] <= MAX_YEAR)].copy()
     return df
 
 @st.cache_data(show_spinner=False)
 def load_displacement_dest():
     if not displacement_dest_path.exists():
-        return pd.DataFrame(columns=["country","country_name","year","month_num","month","admin1_norm","displaced_in"])
+        return pd.DataFrame(columns=["country", "country_name", "year", "month_num", "month", "admin1_norm", "displaced_in"])
     df = pd.read_csv(displacement_dest_path)
     df["country"] = df["country"].apply(canonical_country_norm)
     df["admin1_norm"] = df["admin1_norm"].apply(normalize_text)
@@ -854,16 +872,16 @@ def load_displacement_dest():
     df["year"] = pd.to_numeric(df["year"], errors="coerce")
     df["month_num"] = pd.to_numeric(df["month_num"], errors="coerce")
     df["displaced_in"] = pd.to_numeric(df["displaced_in"], errors="coerce").fillna(0)
-    df = df[df["year"].notna()&df["month_num"].notna()&df["admin1_norm"].notna()].copy()
+    df = df[df["year"].notna() & df["month_num"].notna() & df["admin1_norm"].notna()].copy()
     df["year"] = df["year"].astype(int)
     df["month_num"] = df["month_num"].astype(int)
-    df = df[(df["year"]>=MIN_YEAR)&(df["year"]<=MAX_YEAR)].copy()
+    df = df[(df["year"] >= MIN_YEAR) & (df["year"] <= MAX_YEAR)].copy()
     return df
 
 @st.cache_data(show_spinner=False)
 def load_displacement_origin():
     if not displacement_origin_path.exists():
-        return pd.DataFrame(columns=["country","country_name","year","month_num","month","admin1_norm","displaced_from"])
+        return pd.DataFrame(columns=["country", "country_name", "year", "month_num", "month", "admin1_norm", "displaced_from"])
     df = pd.read_csv(displacement_origin_path)
     df["country"] = df["country"].apply(canonical_country_norm)
     df["admin1_norm"] = df["admin1_norm"].apply(normalize_text)
@@ -871,63 +889,79 @@ def load_displacement_origin():
     df["year"] = pd.to_numeric(df["year"], errors="coerce")
     df["month_num"] = pd.to_numeric(df["month_num"], errors="coerce")
     df["displaced_from"] = pd.to_numeric(df["displaced_from"], errors="coerce").fillna(0)
-    df = df[df["year"].notna()&df["month_num"].notna()&df["admin1_norm"].notna()].copy()
+    df = df[df["year"].notna() & df["month_num"].notna() & df["admin1_norm"].notna()].copy()
     df["year"] = df["year"].astype(int)
     df["month_num"] = df["month_num"].astype(int)
-    df = df[(df["year"]>=MIN_YEAR)&(df["year"]<=MAX_YEAR)].copy()
+    df = df[(df["year"] >= MIN_YEAR) & (df["year"] <= MAX_YEAR)].copy()
     return df
 
 @st.cache_data(show_spinner=False)
 def load_world():
     world = gpd.read_file(world_geojson_path)
-    if world.crs is None: world = world.set_crs(epsg=4326)
-    else: world = world.to_crs(epsg=4326)
+    if world.crs is None:
+        world = world.set_crs(epsg=4326)
+    else:
+        world = world.to_crs(epsg=4326)
     world["iso_n3"] = world["iso_n3"].astype(str).str.strip().str.zfill(3)
     world["iso_a3"] = world["iso_a3"].astype(str).str.strip().str.upper()
-    world["country_name_geo"] = world["name"].astype(str).str.strip() if "name" in world.columns else world["iso_a3"]
+    if "name" in world.columns:
+        world["country_name_geo"] = world["name"].astype(str).str.strip()
+    else:
+        world["country_name_geo"] = world["iso_a3"]
     world["country_norm"] = world["country_name_geo"].apply(canonical_country_norm)
-    world = world[world["iso_a3"]!="-99"].copy()
+    world = world[world["iso_a3"] != "-99"].copy()
     return world
 
 @st.cache_data(show_spinner=False)
 def load_country_admin1_boundary(iso3):
     iso3 = str(iso3).strip().upper()
     path = country_boundaries_dir / f"{iso3}_adm1.geojson"
-    iso_to_country = {"LBN":"Lebanon","UKR":"Ukraine","RUS":"Russia"}
+    iso_to_country = {"LBN": "Lebanon", "UKR": "Ukraine", "RUS": "Russia"}
 
     if path.exists():
         gdf = gpd.read_file(path)
-        if gdf.crs is None: gdf = gdf.set_crs(epsg=4326)
-        else: gdf = gdf.to_crs(epsg=4326)
-        try: gdf["geometry"] = gdf["geometry"].simplify(0.01, preserve_topology=True)
-        except: pass
+        if gdf.crs is None:
+            gdf = gdf.set_crs(epsg=4326)
+        else:
+            gdf = gdf.to_crs(epsg=4326)
+        try:
+            gdf["geometry"] = gdf["geometry"].simplify(0.01, preserve_topology=True)
+        except Exception:
+            pass
         gdf = repair_geometries(gdf)
         name_col = detect_name_column(gdf)
-        if name_col is None: return None, None
+        if name_col is None:
+            return None, None
         country_name = iso_to_country.get(iso3)
         gdf["admin_name"] = gdf[name_col].astype(str).str.strip()
         gdf["admin_name_norm"] = gdf["admin_name"].apply(lambda x: standardize_admin_name(x, country_name))
         gdf = gdf[gdf["admin_name_norm"].notna()].copy()
-        return gdf[["admin_name","admin_name_norm","geometry"]].copy(), name_col
+        gdf = gdf[["admin_name","admin_name_norm","geometry"]].copy()
+        return gdf, name_col
 
     if iso3 == "LBN" and lbn_admin2_fallback_path.exists():
         gdf = gpd.read_file(lbn_admin2_fallback_path)
-        if gdf.crs is None: gdf = gdf.set_crs(epsg=4326)
-        else: gdf = gdf.to_crs(epsg=4326)
+        if gdf.crs is None:
+            gdf = gdf.set_crs(epsg=4326)
+        else:
+            gdf = gdf.to_crs(epsg=4326)
         gdf["shapeName"] = gdf["shapeName"].astype(str).str.strip()
         gdf["admin_name"] = gdf["shapeName"].map(DISTRICT_TO_ADMIN1_GEO)
         gdf = gdf.dropna(subset=["admin_name"]).copy()
         gdf = gdf.dissolve(by="admin_name", as_index=False)
         gdf = repair_geometries(gdf)
-        gdf["admin_name_norm"] = gdf["admin_name"].apply(lambda x: standardize_admin_name(x,"Lebanon"))
+        gdf["admin_name_norm"] = gdf["admin_name"].apply(lambda x: standardize_admin_name(x, "Lebanon"))
         gdf = gdf[gdf["admin_name_norm"].notna()].copy()
-        return gdf[["admin_name","admin_name_norm","geometry"]].copy(), "admin_name"
+        gdf = gdf[["admin_name","admin_name_norm","geometry"]].copy()
+        return gdf, "admin_name"
+
     return None, None
 
 # ──────────────────────────────────────────────────
 # LOAD DATA
 # ──────────────────────────────────────────────────
 ensure_required_files()
+
 country_conflict    = load_country_conflict()
 admin_conflict      = load_admin_conflict()
 country_priority    = load_country_priority()
@@ -939,13 +973,20 @@ world               = load_world()
 # ──────────────────────────────────────────────────
 # SESSION STATE
 # ──────────────────────────────────────────────────
-for key, default in [
-    ("view","world"),("selected_iso3",None),("selected_country_name",None),
-    ("world_country","All"),("world_mode","Conflict View"),
-    ("world_event_type","All"),("world_metric","events"),
-    ("country_year",None),("country_month",None),
-    ("country_event_type","All"),("country_metric","events"),
-]:
+defaults = [
+    ("view","world"),
+    ("selected_iso3",None),
+    ("selected_country_name",None),
+    ("world_country","All"),
+    ("world_mode","Conflict View"),
+    ("world_event_type","All"),
+    ("world_metric","events"),
+    ("country_year",None),
+    ("country_month",None),
+    ("country_event_type","All"),
+    ("country_metric","events"),
+]
+for key, default in defaults:
     if key not in st.session_state:
         st.session_state[key] = default
 
@@ -958,30 +999,23 @@ if "world_year" not in st.session_state or "world_month" not in st.session_state
 # SIDEBAR BRAND
 # ──────────────────────────────────────────────────
 st.sidebar.markdown("""
-<div class="sidebar-brand">
-  <div class="brand-icon">C</div>
-  <div class="brand-text">
-    <div class="brand-sub-label">Conflict Intelligence</div>
-    <div class="brand-main">Explorer</div>
-  </div>
-</div>
+
 """, unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════
+# ──────────────────────────────────────────────────
 # WORLD VIEW
-# ══════════════════════════════════════════════════
+# ──────────────────────────────────────────────────
 if st.session_state["view"] == "world":
-
     st.sidebar.markdown('<div class="sidebar-section">View Mode</div>', unsafe_allow_html=True)
     world_mode = st.sidebar.selectbox(
         "Dashboard Mode",
         ["Conflict View","Priority View"],
-        index=0 if st.session_state["world_mode"]=="Conflict View" else 1,
+        index=0 if st.session_state["world_mode"] == "Conflict View" else 1,
         label_visibility="collapsed",
     )
     st.session_state["world_mode"] = world_mode
 
-    source_df = country_conflict.copy() if world_mode=="Conflict View" else country_priority.copy()
+    source_df = country_conflict.copy() if world_mode == "Conflict View" else country_priority.copy()
 
     st.sidebar.markdown('<div class="sidebar-section">Scope</div>', unsafe_allow_html=True)
     country_options = ["All"] + sorted(source_df["country"].dropna().unique().tolist())
@@ -996,34 +1030,40 @@ if st.session_state["view"] == "world":
     base_df = source_df.copy()
     if selected_country != "All":
         cnorm = canonical_country_norm(selected_country)
-        base_df = base_df[base_df["country_norm"]==cnorm].copy()
+        base_df = base_df[base_df["country_norm"] == cnorm].copy()
 
     st.sidebar.markdown('<div class="sidebar-section">Period</div>', unsafe_allow_html=True)
-    world_years = sorted([y for y in base_df["year"].dropna().unique() if MIN_YEAR<=y<=MAX_YEAR])
+    world_years = sorted([y for y in base_df["year"].dropna().unique() if MIN_YEAR <= y <= MAX_YEAR])
     if not world_years:
-        st.warning("No years available."); st.stop()
+        st.warning("No years available.")
+        st.stop()
 
     selected_year = st.sidebar.selectbox(
-        "Year", world_years,
+        "Year",
+        world_years,
         index=world_years.index(st.session_state["world_year"])
-              if st.session_state["world_year"] in world_years else len(world_years)-1,
+              if st.session_state["world_year"] in world_years else len(world_years) - 1,
     )
     st.session_state["world_year"] = selected_year
 
-    avail_months = (base_df[base_df["year"]==selected_year][["month_num","month"]]
-                    .drop_duplicates().sort_values("month_num"))
+    avail_months = (
+        base_df[base_df["year"] == selected_year][["month_num","month"]]
+        .drop_duplicates()
+        .sort_values("month_num")
+    )
     month_list = avail_months["month"].tolist()
     if not month_list:
-        st.warning("No months available."); st.stop()
+        st.warning("No months available.")
+        st.stop()
 
     selected_month = st.sidebar.selectbox(
-        "Month", month_list,
+        "Month",
+        month_list,
         index=month_list.index(st.session_state["world_month"])
-              if st.session_state["world_month"] in month_list else len(month_list)-1,
+              if st.session_state["world_month"] in month_list else len(month_list) - 1,
     )
     st.session_state["world_month"] = selected_month
 
-    # ── HEADER ────────────────────────────────────
     is_priority = world_mode == "Priority View"
     view_label  = "Priority Analysis" if is_priority else "Conflict Analysis"
     area_label  = selected_country if selected_country != "All" else "Global"
@@ -1043,43 +1083,48 @@ if st.session_state["view"] == "world":
     # ─────────────────────────────────────────────
     if world_mode == "Conflict View":
         st.sidebar.markdown('<div class="sidebar-section">Filters</div>', unsafe_allow_html=True)
-
-        avail_et = (base_df[(base_df["year"]==selected_year)&
-                            (base_df["month"].str.lower()==selected_month.lower())]
-                    ["event_type"].dropna().drop_duplicates().sort_values().tolist())
+        avail_et = (
+            base_df[(base_df["year"] == selected_year) &
+                    (base_df["month"].str.lower() == selected_month.lower())]
+            ["event_type"].dropna().drop_duplicates().sort_values().tolist()
+        )
         avail_et = ["All"] + avail_et
         selected_et = st.sidebar.selectbox(
-            "Event Type", avail_et,
+            "Event Type",
+            avail_et,
             index=avail_et.index(st.session_state["world_event_type"])
                   if st.session_state["world_event_type"] in avail_et else 0,
         )
         st.session_state["world_event_type"] = selected_et
 
         metric = st.sidebar.selectbox(
-            "Metric", ["events","fatalities"],
-            index=0 if st.session_state["world_metric"]=="events" else 1,
+            "Metric",
+            ["events","fatalities"],
+            index=0 if st.session_state["world_metric"] == "events" else 1,
         )
         st.session_state["world_metric"] = metric
 
-        filtered = base_df[(base_df["year"]==selected_year)&
-                           (base_df["month"].str.lower()==selected_month.lower())].copy()
+        filtered = base_df[(base_df["year"] == selected_year) &
+                           (base_df["month"].str.lower() == selected_month.lower())].copy()
         filtered = filter_event_type(filtered, selected_et)
 
         if filtered.empty:
-            st.warning("No data for selected filters."); st.stop()
+            st.warning("No data for selected filters.")
+            st.stop()
 
-        country_period = (filtered.groupby(["iso_n3","country","country_norm"], as_index=False)
-                          .agg({"events":"sum","fatalities":"sum"}))
+        country_period = (
+            filtered.groupby(["iso_n3","country","country_norm"], as_index=False)
+            .agg({"events":"sum","fatalities":"sum"})
+        )
         merged_w = world.merge(country_period, how="left", on=["iso_n3","country_norm"])
-        merged_w["events"]     = merged_w["events"].fillna(0)
+        merged_w["events"] = merged_w["events"].fillna(0)
         merged_w["fatalities"] = merged_w["fatalities"].fillna(0)
-        merged_w["country"]    = merged_w["country"].fillna(merged_w["country_name_geo"])
+        merged_w["country"] = merged_w["country"].fillna(merged_w["country_name_geo"])
 
-        total_ev   = int(country_period["events"].sum())
-        total_fat  = int(country_period["fatalities"].sum())
-        ctry_count = int((country_period[metric]>0).sum())
+        total_ev = int(country_period["events"].sum())
+        total_fat = int(country_period["fatalities"].sum())
+        ctry_count = int((country_period[metric] > 0).sum())
 
-        # KPI cards
         st.markdown(f"""
         <div class="kpi-row">
           <div class="kpi-card">
@@ -1109,141 +1154,123 @@ if st.session_state["view"] == "world":
         </div>
         """, unsafe_allow_html=True)
 
-        cscale = SCALE_BLUE if metric=="events" else SCALE_WARM
+        cscale = SCALE_BLUE if metric == "events" else SCALE_WARM
 
         if selected_country == "All":
-            # Compute country centroids for bubble placement
-            _wc = world.copy()
-            _wc["lat"] = _wc.geometry.representative_point().y
-            _wc["lon"] = _wc.geometry.representative_point().x
-            _bubble = (
-                _wc[["iso_n3","iso_a3","country_name_geo","country_norm","lat","lon"]]
-                .merge(country_period, how="inner", on=["iso_n3","country_norm"])
-            )
-            _bubble = _bubble[_bubble[metric] > 0].copy()
-
-            _bmax   = float(_bubble[metric].max()) if not _bubble.empty else 1.0
-            _bubble["_sz"] = (_bubble[metric] / _bmax).pow(0.5) * 55
-            _bcolor = "#2c4a6e" if metric == "events" else "#c0392b"
-
-            fig = go.Figure()
-
-            # Layer 1: choropleth country fill
-            fig.add_trace(go.Choroplethmapbox(
-                geojson=json.loads(merged_w.to_json()),
-                locations=merged_w["iso_n3"],
-                z=merged_w[metric],
-                featureidkey="properties.iso_n3",
-                colorscale=cscale,
-                zmin=0, zmax=_bmax,
-                marker_line_width=0.4,
-                marker_line_color="rgba(27,34,48,0.15)",
-                marker_opacity=0.65,
-                showscale=False,
-                hoverinfo="skip",
-            ))
-
-            # Layer 2: proportional circles
-            fig.add_trace(go.Scattermapbox(
-                lat=_bubble["lat"], lon=_bubble["lon"], mode="markers",
-                marker=dict(
-                    size=_bubble["_sz"], color=_bcolor,
-                    opacity=0.72, sizemode="diameter",
-                ),
-                customdata=_bubble[["iso_a3","country_name_geo","events","fatalities"]].values,
-                hovertemplate=(
-                    "<b>%{customdata[1]}</b><br>"
-                    "Events: %{customdata[2]:,.0f}<br>"
-                    "Fatalities: %{customdata[3]:,.0f}<extra></extra>"
-                ),
-                showlegend=False,
-            ))
-
-            # Layer 3: in-map proportional circle legend (South Pacific — empty ocean)
-            _leg_lats = [-28, -42, -53]
-            _leg_refs = [_bmax, _bmax * 0.55, _bmax * 0.25]
-            _leg_szs  = [55.0, (0.55 ** 0.5) * 55, (0.25 ** 0.5) * 55]
-            fig.add_trace(go.Scattermapbox(             # title label
-                lat=[-18], lon=[-148], mode="text",
-                text=[metric.capitalize()],
-                textfont=dict(family="Inter", size=11, color="#5a6577"),
-                textposition="middle center",
-                hoverinfo="skip", showlegend=False,
-            ))
-            fig.add_trace(go.Scattermapbox(             # circles
-                lat=_leg_lats, lon=[-148, -148, -148], mode="markers",
-                marker=dict(size=_leg_szs, color=_bcolor, opacity=0.72, sizemode="diameter"),
-                hoverinfo="skip", showlegend=False,
-            ))
-            fig.add_trace(go.Scattermapbox(             # value labels
-                lat=_leg_lats, lon=[-133, -133, -133], mode="text",
-                text=[fmt_big(v) for v in _leg_refs],
-                textfont=dict(family="Inter", size=11, color="#1b2230"),
-                textposition="middle right",
-                hoverinfo="skip", showlegend=False,
-            ))
-
+            fig = px.choropleth_mapbox(
+    merged_w,
+    geojson=json.loads(merged_w.to_json()),
+    locations="iso_n3",
+    featureidkey="properties.iso_n3",
+    color=metric,
+    color_continuous_scale=cscale,
+    hover_name="country_name_geo",
+    hover_data={
+        "country": True,
+        "events": True,
+        "fatalities": True,
+        "iso_n3": False,
+        "iso_a3": False,
+    },
+    custom_data=["iso_a3", "country_name_geo"],
+    mapbox_style="carto-positron",
+    zoom=0.8,
+    center={"lat": 20, "lon": 10},
+    opacity=0.85,
+    title=f"{metric.capitalize()} — {selected_month} {selected_year}",
+)
+            fig.update_traces(marker_line_color="rgba(27,34,48,0.15)", marker_line_width=0.4)
             fig.update_layout(
-                mapbox=dict(style="carto-positron", zoom=0.6, center=dict(lat=20, lon=10)),
-                paper_bgcolor="#ffffff",
-                font=dict(family="Inter", color="#5a6577", size=11),
-                title=dict(
-                    text=f"{metric.capitalize()} by Country — {selected_month} {selected_year}",
-                    font=dict(family="Playfair Display", size=16, color="#1b2230"),
-                    x=0.02, xanchor="left", y=0.97,
-                ),
-                margin=dict(l=0, r=0, t=50, b=0),
-                height=620,
+    mapbox_style="carto-positron",
+    margin=dict(l=0, r=0, t=50, b=0),
+    height=800,
+    paper_bgcolor="#ffffff",
+    plot_bgcolor="#ffffff",
+)
+            fig.update_layout(
+                **LIGHT_MAP_LAYOUT,
+                coloraxis_colorbar=dict(
+                    title=metric.capitalize(),
+                    tickfont=dict(family="Inter", size=10, color="#5a6577"),
+                    title_font=dict(family="Inter", size=11, color="#1b2230"),
+                )
             )
-
-            event = st.plotly_chart(fig, use_container_width=True,
-                                    on_select="rerun", selection_mode=("points",),
-                                    key="world_conflict_all")
+            event = st.plotly_chart(
+                fig,
+                use_container_width=True,
+                on_select="rerun",
+                selection_mode=("points",),
+                key="world_conflict_all",
+            )
             clicked_iso3, clicked_name = extract_selected_country_info(event)
-            if clicked_iso3:
+            resolved_iso3, resolved_name = resolve_clicked_country(clicked_iso3, clicked_name)
+            if resolved_iso3 and resolved_name:
                 st.session_state.update({
-                    "selected_iso3":clicked_iso3,"selected_country_name":clicked_name,
-                    "view":"country","country_year":None,"country_month":None,
+                    "selected_iso3":resolved_iso3,
+                    "selected_country_name":resolved_name,
+                    "view":"country",
+                    "country_year":None,
+                    "country_month":None,
                 })
                 st.rerun()
-
         else:
-            sgeo = merged_w[merged_w["country_norm"]==canonical_country_norm(selected_country)].copy()
+            sgeo = merged_w[merged_w["country_norm"] == canonical_country_norm(selected_country)].copy()
             fig = px.choropleth(
-                sgeo, geojson=json.loads(sgeo.to_json()),
-                locations="iso_n3", featureidkey="properties.iso_n3",
-                color=metric, color_continuous_scale=cscale,
+                sgeo,
+                geojson=json.loads(sgeo.to_json()),
+                locations="iso_n3",
+                featureidkey="properties.iso_n3",
+                color=metric,
+                color_continuous_scale=cscale,
                 hover_name="country_name_geo",
-                hover_data={"country":True,"events":True,"fatalities":True,"iso_n3":False,"iso_a3":False},
+                hover_data={
+                    "country":True,"events":True,"fatalities":True,
+                    "iso_n3":False,"iso_a3":False,
+                },
+                custom_data=["iso_a3","country_name_geo"],
                 projection="natural earth",
                 title=f"{selected_country} — {metric.capitalize()}",
             )
             fig.update_traces(marker_line_color="rgba(27,34,48,0.25)", marker_line_width=0.6)
-            fig.update_geos(showcountries=True, showcoastlines=False, showframe=False,
-                            bgcolor="#ffffff", showocean=True, oceancolor="#f4f7fb",
-                            showland=True, landcolor="#fafbfd",
-                            countrycolor="rgba(27,34,48,0.2)")
-            fig.update_layout(**LIGHT_MAP_LAYOUT, height=500,
-                              coloraxis_colorbar=dict(
-                                  title=metric.capitalize(),
-                                  tickfont=dict(family="Inter", size=10, color="#5a6577"),
-                                  title_font=dict(family="Inter", size=11, color="#1b2230"),
-                              ))
-            st.plotly_chart(fig, use_container_width=True, key="world_conflict_selected")
+            fig.update_geos(
+                showcountries=True, showcoastlines=False, showframe=False,
+                bgcolor="#ffffff", showocean=True, oceancolor="#f4f7fb",
+                showland=True, landcolor="#fafbfd",
+                countrycolor="rgba(27,34,48,0.2)"
+            )
+            zoom_geo_to_gdf(fig, sgeo)
+            fig.update_layout(
+                **{**LIGHT_MAP_LAYOUT, "height":500},
+                coloraxis_colorbar=dict(
+                    title=metric.capitalize(),
+                    tickfont=dict(family="Inter", size=10, color="#5a6577"),
+                    title_font=dict(family="Inter", size=11, color="#1b2230"),
+                )
+            )
+            event = st.plotly_chart(
+                fig,
+                use_container_width=True,
+                on_select="rerun",
+                selection_mode=("points",),
+                key="world_conflict_selected",
+            )
+            clicked_iso3, clicked_name = extract_selected_country_info(event)
+            resolved_iso3, resolved_name = resolve_clicked_country(clicked_iso3, clicked_name, selected_country)
+            if resolved_iso3 and resolved_name:
+                st.session_state.update({
+                    "selected_iso3":resolved_iso3,
+                    "selected_country_name":resolved_name,
+                    "view":"country",
+                    "country_year":None,
+                    "country_month":None,
+                })
+                st.rerun()
 
-            row = world[world["country_norm"]==canonical_country_norm(selected_country)]
-            if not row.empty:
-                iso3 = row["iso_a3"].iloc[0]
-                if st.button(f"→  Open {selected_country} Admin1 View"):
-                    st.session_state.update({
-                        "selected_iso3":iso3,"selected_country_name":selected_country,
-                        "view":"country","country_year":None,"country_month":None,
-                    })
-                    st.rerun()
-
-        st.markdown(f'<div class="section-title"><span class="section-dot"></span>Top 10 by {metric.capitalize()}</div>',
-                    unsafe_allow_html=True)
-        top = (country_period.sort_values(metric, ascending=False).head(10).reset_index(drop=True))
+        st.markdown(
+            f'<div class="section-title"><span class="section-dot"></span>Top 10 by {metric.capitalize()}</div>',
+            unsafe_allow_html=True
+        )
+        top = country_period.sort_values(metric, ascending=False).head(10).reset_index(drop=True)
         render_top10_grid(top, "country", metric, fmt_fn=lambda v: f"{int(v):,}")
 
     # ─────────────────────────────────────────────
@@ -1254,28 +1281,35 @@ if st.session_state["view"] == "world":
         metric = st.sidebar.selectbox(
             "Priority Metric",
             ["country_priority_score","events","fatalities","displaced","population_exposure"],
-            index=0, label_visibility="collapsed",
+            index=0,
+            label_visibility="collapsed",
         )
 
-        filtered = base_df[(base_df["year"]==selected_year)&
-                           (base_df["month"].str.lower()==selected_month.lower())].copy()
+        filtered = base_df[(base_df["year"] == selected_year) &
+                           (base_df["month"].str.lower() == selected_month.lower())].copy()
         if filtered.empty:
-            st.warning("No priority data for selected filters."); st.stop()
+            st.warning("No priority data for selected filters.")
+            st.stop()
 
-        world_pri = (filtered.groupby("country_norm", as_index=False)
-                     .agg({"events":"sum","fatalities":"sum","population_exposure":"sum",
-                           "displaced":"sum","country_priority_score":"mean","country_priority_rank":"min"}))
+        world_pri = (
+            filtered.groupby("country_norm", as_index=False)
+            .agg({
+                "events":"sum","fatalities":"sum","population_exposure":"sum",
+                "displaced":"sum","country_priority_score":"mean","country_priority_rank":"min"
+            })
+        )
         cname_lk = filtered.groupby("country_norm", as_index=False)["country"].first()
         world_pri = world_pri.merge(cname_lk, how="left", on="country_norm")
+
         merged_w = world.merge(world_pri, how="left", on="country_norm")
         for col in ["events","fatalities","population_exposure","displaced","country_priority_score"]:
             merged_w[col] = pd.to_numeric(merged_w[col], errors="coerce").fillna(0)
         merged_w["country"] = merged_w["country"].fillna(merged_w["country_name_geo"])
 
-        total_ev   = int(world_pri["events"].sum())
-        total_fat  = int(world_pri["fatalities"].sum())
+        total_ev = int(world_pri["events"].sum())
+        total_fat = int(world_pri["fatalities"].sum())
         total_disp = float(world_pri["displaced"].sum())
-        ctry_count = int((merged_w["country_priority_score"]>0).sum())
+        ctry_count = int((merged_w["country_priority_score"] > 0).sum())
 
         st.markdown(f"""
         <div class="kpi-row">
@@ -1306,100 +1340,136 @@ if st.session_state["view"] == "world":
         </div>
         """, unsafe_allow_html=True)
 
-        cscale = SCALE_BLUE if metric=="country_priority_score" else SCALE_WARM
+        cscale = SCALE_BLUE if metric == "country_priority_score" else SCALE_WARM
 
         if selected_country == "All":
             fig = px.choropleth(
                 merged_w,
                 geojson=json.loads(merged_w.to_json()),
-                locations="iso_n3", featureidkey="properties.iso_n3",
-                color=metric, color_continuous_scale=cscale,
+                locations="iso_n3",
+                featureidkey="properties.iso_n3",
+                color=metric,
+                color_continuous_scale=cscale,
                 hover_name="country_name_geo",
-                hover_data={"country":True,"events":True,"fatalities":True,
-                            "displaced":True,"population_exposure":True,
-                            "country_priority_score":":.3f","iso_n3":False,"iso_a3":False},
+                hover_data={
+                    "country":True,"events":True,"fatalities":True,
+                    "displaced":True,"population_exposure":True,
+                    "country_priority_score":":.3f","iso_n3":False,"iso_a3":False
+                },
                 custom_data=["iso_a3","country_name_geo"],
                 projection="natural earth",
                 title=f"{metric_label(metric)} — {selected_month} {selected_year}",
             )
             fig.update_traces(marker_line_color="rgba(27,34,48,0.15)", marker_line_width=0.4)
-            fig.update_geos(showcoastlines=False, showframe=False, bgcolor="#ffffff",
-                            showocean=True, oceancolor="#f4f7fb",
-                            showland=True, landcolor="#fafbfd")
-            fig.update_layout(**LIGHT_MAP_LAYOUT,
-                              coloraxis_colorbar=dict(
-                                  title=metric_label(metric),
-                                  tickfont=dict(family="Inter", size=10, color="#5a6577"),
-                                  title_font=dict(family="Inter", size=11, color="#1b2230"),
-                                  len=0.6, thickness=10, outlinewidth=0,
-                              ))
-
-            event = st.plotly_chart(fig, use_container_width=True,
-                                    on_select="rerun", selection_mode=("points",),
-                                    key="world_priority_all")
+            fig.update_geos(
+                showcoastlines=False, showframe=False, bgcolor="#ffffff",
+                showocean=True, oceancolor="#f4f7fb",
+                showland=True, landcolor="#fafbfd"
+            )
+            fig.update_layout(
+                **LIGHT_MAP_LAYOUT,
+                coloraxis_colorbar=dict(
+                    title=metric_label(metric),
+                    tickfont=dict(family="Inter", size=10, color="#5a6577"),
+                    title_font=dict(family="Inter", size=11, color="#1b2230"),
+                    len=0.6, thickness=10, outlinewidth=0,
+                )
+            )
+            event = st.plotly_chart(
+                fig,
+                use_container_width=True,
+                on_select="rerun",
+                selection_mode=("points",),
+                key="world_priority_all",
+            )
             clicked_iso3, clicked_name = extract_selected_country_info(event)
-            if clicked_iso3:
+            resolved_iso3, resolved_name = resolve_clicked_country(clicked_iso3, clicked_name)
+            if resolved_iso3 and resolved_name:
                 st.session_state.update({
-                    "selected_iso3":clicked_iso3,"selected_country_name":clicked_name,
-                    "view":"country","country_year":None,"country_month":None,
+                    "selected_iso3":resolved_iso3,
+                    "selected_country_name":resolved_name,
+                    "view":"country",
+                    "country_year":None,
+                    "country_month":None,
                 })
                 st.rerun()
         else:
-            sgeo = merged_w[merged_w["country_norm"]==canonical_country_norm(selected_country)].copy()
+            sgeo = merged_w[merged_w["country_norm"] == canonical_country_norm(selected_country)].copy()
             fig = px.choropleth(
-                sgeo, geojson=json.loads(sgeo.to_json()),
-                locations="iso_n3", featureidkey="properties.iso_n3",
-                color=metric, color_continuous_scale=cscale,
+                sgeo,
+                geojson=json.loads(sgeo.to_json()),
+                locations="iso_n3",
+                featureidkey="properties.iso_n3",
+                color=metric,
+                color_continuous_scale=cscale,
                 hover_name="country_name_geo",
-                hover_data={"country":True,"events":True,"fatalities":True,
-                            "displaced":True,"population_exposure":True,
-                            "country_priority_score":":.3f","iso_n3":False,"iso_a3":False},
+                hover_data={
+                    "country":True,"events":True,"fatalities":True,
+                    "displaced":True,"population_exposure":True,
+                    "country_priority_score":":.3f","iso_n3":False,"iso_a3":False
+                },
+                custom_data=["iso_a3","country_name_geo"],
                 projection="natural earth",
                 title=f"{selected_country} — {metric_label(metric)}",
             )
             fig.update_traces(marker_line_color="rgba(27,34,48,0.25)", marker_line_width=0.6)
-            fig.update_geos(showcountries=True, showcoastlines=False, showframe=False,
-                            bgcolor="#ffffff", showocean=True, oceancolor="#f4f7fb",
-                            showland=True, landcolor="#fafbfd",
-                            countrycolor="rgba(27,34,48,0.2)")
-            fig.update_layout(**LIGHT_MAP_LAYOUT, height=500,
-                              coloraxis_colorbar=dict(
-                                  title=metric_label(metric),
-                                  tickfont=dict(family="Inter", size=10, color="#5a6577"),
-                                  title_font=dict(family="Inter", size=11, color="#1b2230"),
-                              ))
-            st.plotly_chart(fig, use_container_width=True, key="world_priority_selected")
+            fig.update_geos(
+                showcountries=True, showcoastlines=False, showframe=False,
+                bgcolor="#ffffff", showocean=True, oceancolor="#f4f7fb",
+                showland=True, landcolor="#fafbfd",
+                countrycolor="rgba(27,34,48,0.2)"
+            )
+            zoom_geo_to_gdf(fig, sgeo)
+            fig.update_layout(
+                **{**LIGHT_MAP_LAYOUT, "height":500},
+                coloraxis_colorbar=dict(
+                    title=metric_label(metric),
+                    tickfont=dict(family="Inter", size=10, color="#5a6577"),
+                    title_font=dict(family="Inter", size=11, color="#1b2230"),
+                )
+            )
+            event = st.plotly_chart(
+                fig,
+                use_container_width=True,
+                on_select="rerun",
+                selection_mode=("points",),
+                key="world_priority_selected",
+            )
+            clicked_iso3, clicked_name = extract_selected_country_info(event)
+            resolved_iso3, resolved_name = resolve_clicked_country(clicked_iso3, clicked_name, selected_country)
+            if resolved_iso3 and resolved_name:
+                st.session_state.update({
+                    "selected_iso3":resolved_iso3,
+                    "selected_country_name":resolved_name,
+                    "view":"country",
+                    "country_year":None,
+                    "country_month":None,
+                })
+                st.rerun()
 
-            row = world[world["country_norm"]==canonical_country_norm(selected_country)]
-            if not row.empty:
-                iso3 = row["iso_a3"].iloc[0]
-                if st.button(f"→  Open {selected_country} Admin1 View"):
-                    st.session_state.update({
-                        "selected_iso3":iso3,"selected_country_name":selected_country,
-                        "view":"country","country_year":None,"country_month":None,
-                    })
-                    st.rerun()
-
-        st.markdown(f'<div class="section-title"><span class="section-dot"></span>Top 10 by {metric_label(metric)}</div>',
-                    unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="section-title"><span class="section-dot"></span>Top 10 by {metric_label(metric)}</div>',
+            unsafe_allow_html=True
+        )
         top = world_pri.sort_values(metric, ascending=False).head(10).reset_index(drop=True)
-        _pfmt = (lambda v: f"{v:.3f}") if metric=="country_priority_score" else fmt_big
-        render_top10_grid(top, "country", metric, fmt_fn=_pfmt)
+        pfmt = (lambda v: f"{v:.3f}") if metric == "country_priority_score" else fmt_big
+        render_top10_grid(top, "country", metric, fmt_fn=pfmt)
 
-
-# ══════════════════════════════════════════════════
+# ──────────────────────────────────────────────────
 # COUNTRY VIEW
-# ══════════════════════════════════════════════════
+# ──────────────────────────────────────────────────
 else:
-    selected_iso3         = st.session_state["selected_iso3"]
+    selected_iso3 = st.session_state["selected_iso3"]
     selected_country_name = st.session_state["selected_country_name"]
 
     if not selected_iso3 or not selected_country_name:
-        st.session_state["view"] = "world"; st.rerun()
+        st.session_state["view"] = "world"
+        st.rerun()
 
     st.sidebar.markdown('<div class="sidebar-section">Navigation</div>', unsafe_allow_html=True)
     if st.sidebar.button("← Back to World Map"):
-        st.session_state["view"] = "world"; st.rerun()
+        st.session_state["view"] = "world"
+        st.rerun()
 
     boundary_gdf, boundary_name_col = load_country_admin1_boundary(selected_iso3)
 
@@ -1411,386 +1481,328 @@ else:
           </div>
         </div>
         """, unsafe_allow_html=True)
-        st.warning(f"No ADM1 boundary file for {selected_country_name} ({selected_iso3}).\n\n"
-                   f"Expected: data/cleaned/boundaries/countries/{selected_iso3}_adm1.geojson")
+        st.warning(
+            f"No ADM1 boundary file for {selected_country_name} ({selected_iso3}).\n\n"
+            f"Expected: data/cleaned/boundaries/countries/{selected_iso3}_adm1.geojson"
+        )
         st.stop()
 
     country_conflict_rows = get_country_admin_rows(admin_conflict, selected_country_name)
     country_priority_rows = get_country_admin_rows(admin1_priority, selected_country_name)
 
     if country_conflict_rows.empty and country_priority_rows.empty:
-        st.warning("No admin-level data found for this country."); st.stop()
+        st.warning("No admin-level data found for this country.")
+        st.stop()
 
-    avail_years = sorted([y for y in country_conflict_rows["year"].dropna().unique() if MIN_YEAR<=y<=MAX_YEAR])
+    available_source = country_conflict_rows if not country_conflict_rows.empty else country_priority_rows
+    avail_years = sorted([y for y in available_source["year"].dropna().unique() if MIN_YEAR <= y <= MAX_YEAR])
+
     if not avail_years:
-        st.warning("No years available."); st.stop()
+        st.warning("No years available.")
+        st.stop()
 
     if st.session_state["country_year"] is None or st.session_state["country_year"] not in avail_years:
-        ly, lm = default_latest_period_with_year_bounds(country_conflict_rows)
+        ly, lm = default_latest_period_with_year_bounds(available_source)
         st.session_state["country_year"] = ly
         st.session_state["country_month"] = lm
 
     st.sidebar.markdown('<div class="sidebar-section">Period</div>', unsafe_allow_html=True)
     selected_year = st.sidebar.selectbox(
-        "Year", avail_years,
-        index=avail_years.index(st.session_state["country_year"]),
+        "Year",
+        avail_years,
+        index=avail_years.index(st.session_state["country_year"])
+              if st.session_state["country_year"] in avail_years else len(avail_years)-1,
     )
     st.session_state["country_year"] = selected_year
 
-    avail_months = (country_conflict_rows[country_conflict_rows["year"]==selected_year]
-                    [["month_num","month"]].drop_duplicates().sort_values("month_num"))
-    month_list = avail_months["month"].tolist()
+    month_source = available_source[available_source["year"] == selected_year][["month_num","month"]].drop_duplicates().sort_values("month_num")
+    month_list = month_source["month"].tolist()
     if not month_list:
-        st.warning("No months available."); st.stop()
-    if st.session_state["country_month"] not in month_list:
-        st.session_state["country_month"] = month_list[0]
+        st.warning("No months available.")
+        st.stop()
 
     selected_month = st.sidebar.selectbox(
-        "Month", month_list,
-        index=month_list.index(st.session_state["country_month"]),
+        "Month",
+        month_list,
+        index=month_list.index(st.session_state["country_month"])
+              if st.session_state["country_month"] in month_list else len(month_list)-1,
     )
     st.session_state["country_month"] = selected_month
 
-    st.sidebar.markdown('<div class="sidebar-section">View</div>', unsafe_allow_html=True)
-    view_mode = st.sidebar.selectbox("Country View", ["Conflict View","Priority View"],
-                                     label_visibility="collapsed")
-    metric = st.sidebar.selectbox(
-        "Metric", ["events","fatalities"],
-        index=0 if st.session_state["country_metric"]=="events" else 1,
-    )
-    st.session_state["country_metric"] = metric
+    st.sidebar.markdown('<div class="sidebar-section">Country View</div>', unsafe_allow_html=True)
+    country_mode = st.sidebar.radio("Mode", ["Conflict", "Priority"], horizontal=True)
 
-    # ── COUNTRY HEADER ─────────────────────────────
-    view_badge = "Priority" if view_mode=="Priority View" else "Conflict"
     st.markdown(f"""
     <div class="dash-header">
       <div>
-        <div class="dash-title"><span class="accent">{selected_country_name}</span> Admin1 {view_mode.replace(' View','')}</div>
-        <div class="dash-subtitle">{selected_month} {selected_year} &nbsp;·&nbsp; Sub-national Analysis</div>
+        <div class="dash-title"><span class="accent">{selected_country_name}</span> Admin1 Analysis</div>
+        <div class="dash-subtitle">{selected_month} {selected_year} &nbsp;·&nbsp; {country_mode} View</div>
       </div>
-      <div class="dash-badge">{view_badge} View</div>
+      <div class="dash-badge">{selected_iso3}</div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ─────────────────────────────────────────────
-    # COUNTRY CONFLICT VIEW
-    # ─────────────────────────────────────────────
-    if view_mode == "Conflict View":
-        st.sidebar.markdown('<div class="sidebar-section">Filters</div>', unsafe_allow_html=True)
-        avail_et = (country_conflict_rows[
-                        (country_conflict_rows["year"]==selected_year)&
-                        (country_conflict_rows["month"].str.lower()==selected_month.lower())]
-                    ["event_type"].dropna().drop_duplicates().sort_values().tolist())
-        avail_et = ["All"] + avail_et if avail_et else ["All"]
-        if st.session_state["country_event_type"] not in avail_et:
-            st.session_state["country_event_type"] = "All"
-        selected_et = st.sidebar.selectbox(
-            "Event Type", avail_et,
-            index=avail_et.index(st.session_state["country_event_type"]),
+    if country_mode == "Conflict":
+        avail_event_types = (
+            country_conflict_rows[
+                (country_conflict_rows["year"] == selected_year) &
+                (country_conflict_rows["month"].str.lower() == selected_month.lower())
+            ]["event_type"].dropna().drop_duplicates().sort_values().tolist()
         )
-        st.session_state["country_event_type"] = selected_et
+        avail_event_types = ["All"] + avail_event_types
 
-        filtered_c = country_conflict_rows[
-            (country_conflict_rows["year"]==selected_year)&
-            (country_conflict_rows["month"].str.lower()==selected_month.lower())].copy()
-        filtered_c = filter_event_type(filtered_c, selected_et)
+        selected_event_type = st.sidebar.selectbox(
+            "Event Type",
+            avail_event_types,
+            index=avail_event_types.index(st.session_state["country_event_type"])
+                  if st.session_state["country_event_type"] in avail_event_types else 0,
+        )
+        st.session_state["country_event_type"] = selected_event_type
 
-        if filtered_c.empty:
-            st.warning("No conflict data for selected filters."); st.stop()
+        selected_metric = st.sidebar.selectbox(
+            "Metric",
+            ["events", "fatalities", "population_exposure"],
+            index=["events", "fatalities", "population_exposure"].index(st.session_state["country_metric"])
+                  if st.session_state["country_metric"] in ["events", "fatalities", "population_exposure"] else 0,
+        )
+        st.session_state["country_metric"] = selected_metric
 
-        grouped = (filtered_c.dropna(subset=["admin1_norm"])
-                   .groupby("admin1_norm", as_index=False)
-                   .agg({"events":"sum","fatalities":"sum"}))
+        conflict_slice = country_conflict_rows[
+            (country_conflict_rows["year"] == selected_year) &
+            (country_conflict_rows["month"].str.lower() == selected_month.lower())
+        ].copy()
+        conflict_slice = filter_event_type(conflict_slice, selected_event_type)
 
-        merged_c = boundary_gdf.merge(grouped, how="left",
-                                       left_on="admin_name_norm", right_on="admin1_norm")
-        merged_c["events"]     = pd.to_numeric(merged_c["events"],     errors="coerce").fillna(0)
-        merged_c["fatalities"] = pd.to_numeric(merged_c["fatalities"], errors="coerce").fillna(0)
-        merged_c = repair_geometries(merged_c)
+        agg_dict = {"events":"sum", "fatalities":"sum"}
+        if "population_exposure" in conflict_slice.columns:
+            agg_dict["population_exposure"] = "sum"
 
-        minx,miny,maxx,maxy = merged_c.total_bounds
-        px_ = (maxx-minx)*0.1 if maxx>minx else 1
-        py_ = (maxy-miny)*0.1 if maxy>miny else 1
+        merged = boundary_gdf.merge(
+            conflict_slice.groupby("admin1_norm", as_index=False).agg(agg_dict),
+            how="left",
+            left_on="admin_name_norm",
+            right_on="admin1_norm",
+        )
 
-        total_ev   = int(merged_c["events"].sum())
-        total_fat  = int(merged_c["fatalities"].sum())
-        areas_data = int((merged_c[metric]>0).sum())
-        top1_area  = merged_c.sort_values(metric, ascending=False)["admin_name"].iloc[0] if not merged_c.empty else "—"
+        for col in ["events", "fatalities", "population_exposure"]:
+            if col not in merged.columns:
+                merged[col] = 0
+            merged[col] = pd.to_numeric(merged[col], errors="coerce").fillna(0)
+
+        total_ev = int(merged["events"].sum())
+        total_fat = int(merged["fatalities"].sum())
+        total_exp = float(merged["population_exposure"].sum())
 
         st.markdown(f"""
         <div class="kpi-row">
           <div class="kpi-card">
             <div class="kpi-accent"></div>
-            <div class="kpi-label">{selected_country_name} Events</div>
+            <div class="kpi-label">Total Events</div>
             <div class="kpi-value">{total_ev:,}</div>
-            <div class="kpi-sub">{selected_et}</div>
+            <div class="kpi-sub">{selected_month} {selected_year}</div>
           </div>
           <div class="kpi-card warm">
             <div class="kpi-accent"></div>
-            <div class="kpi-label">{selected_country_name} Fatalities</div>
+            <div class="kpi-label">Total Fatalities</div>
             <div class="kpi-value">{total_fat:,}</div>
-            <div class="kpi-sub">Reported deaths</div>
+            <div class="kpi-sub">Admin1 aggregation</div>
           </div>
           <div class="kpi-card teal">
             <div class="kpi-accent"></div>
-            <div class="kpi-label">Areas with Data</div>
-            <div class="kpi-value">{areas_data}</div>
-            <div class="kpi-sub">Admin1 zones</div>
-          </div>
-          <div class="kpi-card gold">
-            <div class="kpi-accent"></div>
-            <div class="kpi-label">Highest Impact</div>
-            <div class="kpi-value" style="font-size:20px">{top1_area}</div>
-            <div class="kpi-sub">by {metric}</div>
+            <div class="kpi-label">Population Exposure</div>
+            <div class="kpi-value">{fmt_big(total_exp)}</div>
+            <div class="kpi-sub">If available</div>
           </div>
         </div>
         """, unsafe_allow_html=True)
 
-        base_df = merged_c.copy()
-        plot_df = merged_c[merged_c[metric]>0].copy()
-        cscale  = SCALE_BLUE if metric=="events" else SCALE_WARM
-        real_max = float(plot_df[metric].max()) if not plot_df.empty else 1.0
-        if real_max <= 0: real_max = 1.0
+        cscale = SCALE_BLUE if selected_metric == "events" else SCALE_WARM if selected_metric == "fatalities" else SCALE_GOLD
 
-        fig_c = go.Figure()
-        fig_c.add_trace(go.Choropleth(
-            geojson=json.loads(base_df.to_json()),
-            locations=base_df["admin_name"],
-            z=[0]*len(base_df),
-            featureidkey="properties.admin_name",
-            colorscale=[[0,"#f4f7fb"],[1,"#f4f7fb"]],
-            zmin=0, zmax=1, showscale=False,
-            marker_line_width=0, marker_line_color="rgba(0,0,0,0)",
-            customdata=base_df[["events","fatalities"]].fillna(0).astype(float).values,
-            hovertemplate="<b>%{location}</b><br>events=%{customdata[0]:.0f}<br>fatalities=%{customdata[1]:.0f}<extra></extra>",
-        ))
-        if not plot_df.empty:
-            fig_c.add_trace(go.Choropleth(
-                geojson=json.loads(plot_df.to_json()),
-                locations=plot_df["admin_name"],
-                z=plot_df[metric],
-                featureidkey="properties.admin_name",
-                colorscale=cscale, zmin=0, zmax=real_max,
-                marker_line_width=0, marker_line_color="rgba(0,0,0,0)",
-                colorbar=dict(title=metric.capitalize(),
-                              tickfont=dict(family="Inter",size=10,color="#5a6577"),
-                              title_font=dict(family="Inter",size=11,color="#1b2230"),
-                              len=0.6, thickness=10, outlinewidth=0),
-                customdata=plot_df[["events","fatalities"]].fillna(0).astype(float).values,
-                hovertemplate="<b>%{location}</b><br>events=%{customdata[0]:.0f}<br>fatalities=%{customdata[1]:.0f}<extra></extra>",
-            ))
-
-        fig_c.update_geos(**light_geo_layout([minx-px_,maxx+px_],[miny-py_,maxy+py_]))
-        fig_c.update_layout(
-            **{**LIGHT_MAP_LAYOUT,
-               "title":{"text":f"{selected_country_name} — {metric.capitalize()} by Admin1  ·  {selected_month} {selected_year}",
-                        "font":{"family":"Playfair Display","size":16,"color":"#1b2230"},"x":0.02,"xanchor":"left"},
-               "height":700},
+        fig = px.choropleth(
+            merged,
+            geojson=json.loads(merged.to_json()),
+            locations="admin_name_norm",
+            featureidkey="properties.admin_name_norm",
+            color=selected_metric,
+            color_continuous_scale=cscale,
+            hover_name="admin_name",
+            hover_data={
+                "events":True,"fatalities":True,"population_exposure":True,
+                "admin_name_norm":False,
+            },
+            projection="mercator",
+            title=f"{selected_country_name} — {metric_label(selected_metric)} by Admin1",
         )
-        add_boundaries(fig_c, merged_c)
-        add_country_outline(fig_c, merged_c)
-        st.plotly_chart(fig_c, use_container_width=True, key=f"{selected_iso3}_conflict_chart")
-
-        # Displacement bar chart
-        st.markdown(f'<div class="section-title"><span class="section-dot"></span>Displacement Inflow — {selected_year}</div>',
-                    unsafe_allow_html=True)
-
-        cnorm = canonical_country_norm(selected_country_name)
-        yearly_disp = displacement_dest[
-            (displacement_dest["country"]==cnorm)&
-            (displacement_dest["year"]==selected_year)].copy()
-
-        if not yearly_disp.empty:
-            yearly_disp["admin1_norm"] = yearly_disp["admin1_norm"].apply(
-                lambda x: standardize_admin_name(x, selected_country_name))
-            yearly_disp_g = yearly_disp.groupby("admin1_norm", as_index=False)["displaced_in"].sum()
-            admin_lk = boundary_gdf[["admin_name","admin_name_norm"]].drop_duplicates().rename(
-                columns={"admin_name_norm":"admin1_norm"})
-            yearly_disp_g = yearly_disp_g.merge(admin_lk, how="left", on="admin1_norm")
-            yearly_disp_g["label"] = yearly_disp_g["admin_name"].fillna(yearly_disp_g["admin1_norm"])
-            yearly_disp_g = yearly_disp_g.sort_values("displaced_in", ascending=False)
-
-            fig_bar = px.bar(
-                yearly_disp_g, x="label", y="displaced_in",
-                labels={"label":"Admin1","displaced_in":"Displaced"},
-                color_discrete_sequence=["#2c4a6e"],
+        fig.update_traces(marker_line_color="rgba(27,34,48,0.25)", marker_line_width=0.8)
+        fig.update_geos(
+            showcountries=False, showcoastlines=False, showframe=False,
+            bgcolor="#ffffff", showocean=False, showland=True,
+            landcolor="#fafbfd", fitbounds="locations",
+        )
+        zoom_geo_to_gdf(fig, merged)
+        fig.update_layout(
+            **{**LIGHT_MAP_LAYOUT, "height":620},
+            coloraxis_colorbar=dict(
+                title=metric_label(selected_metric),
+                tickfont=dict(family="Inter", size=10, color="#5a6577"),
+                title_font=dict(family="Inter", size=11, color="#1b2230"),
             )
-            fig_bar.update_layout(
-                paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-                font=dict(family="Inter", color="#5a6577", size=11),
-                title=dict(font=dict(family="Playfair Display",size=14,color="#1b2230")),
-                xaxis=dict(tickangle=-45, tickfont=dict(family="Inter",size=11,color="#5a6577"),
-                           gridcolor="#eef1f6", linecolor="#e4e8ef"),
-                yaxis=dict(tickfont=dict(family="Inter",size=11,color="#5a6577"),
-                           gridcolor="#eef1f6", linecolor="#e4e8ef"),
-                margin=dict(l=20,r=20,t=40,b=120),
-                height=420,
-                bargap=0.25,
-            )
-            fig_bar.update_traces(marker_line_width=0, marker=dict(
-                color=yearly_disp_g["displaced_in"],
-                colorscale=SCALE_BLUE,
-                showscale=False,
-            ))
-            st.plotly_chart(fig_bar, use_container_width=True, key=f"{selected_iso3}_disp_bar_{selected_year}")
+        )
+        st.plotly_chart(fig, use_container_width=True, key="country_conflict_map")
 
-            st.dataframe(
-                yearly_disp_g[["label","displaced_in"]].rename(
-                    columns={"label":"Admin1","displaced_in":"Displaced People"}),
-                use_container_width=True,
+        st.markdown(
+            f'<div class="section-title"><span class="section-dot"></span>Top Admin1 by {metric_label(selected_metric)}</div>',
+            unsafe_allow_html=True
+        )
+        top_admin = merged.sort_values(selected_metric, ascending=False)[["admin_name", selected_metric]].head(10).reset_index(drop=True)
+        render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_big)
+
+    else:
+        selected_metric = st.sidebar.selectbox(
+            "Metric",
+            ["priority_score_country", "priority_score_global", "events", "fatalities", "displaced", "population_exposure"],
+            index=0,
+        )
+
+        priority_slice = country_priority_rows[
+            (country_priority_rows["year"] == selected_year) &
+            (country_priority_rows["month"].str.lower() == selected_month.lower())
+        ].copy()
+
+        disp_in_slice = displacement_dest[
+            (displacement_dest["country"] == canonical_country_norm(selected_country_name)) &
+            (displacement_dest["year"] == selected_year) &
+            (displacement_dest["month"].str.lower() == selected_month.lower())
+        ].copy()
+
+        disp_out_slice = displacement_origin[
+            (displacement_origin["country"] == canonical_country_norm(selected_country_name)) &
+            (displacement_origin["year"] == selected_year) &
+            (displacement_origin["month"].str.lower() == selected_month.lower())
+        ].copy()
+
+        agg_dict = {"events":"sum", "fatalities":"sum"}
+        if "displaced" in priority_slice.columns:
+            agg_dict["displaced"] = "sum"
+        if "population_exposure" in priority_slice.columns:
+            agg_dict["population_exposure"] = "sum"
+        if "priority_score_country" in priority_slice.columns:
+            agg_dict["priority_score_country"] = "mean"
+        if "priority_score_global" in priority_slice.columns:
+            agg_dict["priority_score_global"] = "mean"
+
+        merged = boundary_gdf.merge(
+            priority_slice.groupby("admin1_norm", as_index=False).agg(agg_dict),
+            how="left",
+            left_on="admin_name_norm",
+            right_on="admin1_norm",
+        )
+
+        if not disp_in_slice.empty:
+            merged = merged.merge(
+                disp_in_slice.groupby("admin1_norm", as_index=False)["displaced_in"].sum(),
+                how="left",
+                left_on="admin_name_norm",
+                right_on="admin1_norm",
+                suffixes=("", "_dest")
             )
         else:
-            st.info("No displacement data available for this year.")
+            merged["displaced_in"] = 0
 
-        st.markdown(f'<div class="section-title"><span class="section-dot"></span>Top 10 Areas by {metric.capitalize()}</div>',
-                    unsafe_allow_html=True)
-        top_a = (merged_c[["admin_name","events","fatalities"]]
-                 .sort_values(metric, ascending=False).head(10).reset_index(drop=True))
-        render_top10_grid(top_a, "admin_name", metric, fmt_fn=lambda v: f"{int(v):,}")
+        if not disp_out_slice.empty:
+            merged = merged.merge(
+                disp_out_slice.groupby("admin1_norm", as_index=False)["displaced_from"].sum(),
+                how="left",
+                left_on="admin_name_norm",
+                right_on="admin1_norm",
+                suffixes=("", "_orig")
+            )
+        else:
+            merged["displaced_from"] = 0
 
-    # ─────────────────────────────────────────────
-    # COUNTRY PRIORITY VIEW
-    # ─────────────────────────────────────────────
-    else:
-        cp_df = country_priority_rows[
-            (country_priority_rows["year"]==selected_year)&
-            (country_priority_rows["month"].str.lower()==selected_month.lower())].copy()
+        for col in ["events","fatalities","displaced","population_exposure","priority_score_country",
+                    "priority_score_global","displaced_in","displaced_from"]:
+            if col not in merged.columns:
+                merged[col] = 0
+            merged[col] = pd.to_numeric(merged[col], errors="coerce").fillna(0)
 
-        cnorm = canonical_country_norm(selected_country_name)
-
-        disp_dest_m = displacement_dest[
-            (displacement_dest["country"]==cnorm)&
-            (displacement_dest["year"]==selected_year)&
-            (displacement_dest["month"].str.lower()==selected_month.lower())][["admin1_norm","displaced_in"]].copy()
-        disp_orig_m = displacement_origin[
-            (displacement_origin["country"]==cnorm)&
-            (displacement_origin["year"]==selected_year)&
-            (displacement_origin["month"].str.lower()==selected_month.lower())][["admin1_norm","displaced_from"]].copy()
-
-        for d in [disp_dest_m, disp_orig_m]:
-            d["admin1_norm"] = d["admin1_norm"].apply(lambda x: standardize_admin_name(x, selected_country_name))
-
-        cp_df = cp_df.merge(disp_dest_m, how="left", on="admin1_norm")
-        cp_df = cp_df.merge(disp_orig_m, how="left", on="admin1_norm")
-        cp_df["displaced_in"]   = pd.to_numeric(cp_df.get("displaced_in",0),   errors="coerce").fillna(0)
-        cp_df["displaced_from"] = pd.to_numeric(cp_df.get("displaced_from",0), errors="coerce").fillna(0)
-        cp_df["displaced"]      = cp_df["displaced_in"]
-
-        if cp_df.empty:
-            st.warning("No priority data for selected period."); st.stop()
-
-        score_col = "priority_score_country"
-        rank_col  = "priority_rank_country"
-        class_col = "priority_class_country"
-
-        merged_p = boundary_gdf.merge(cp_df, how="left", left_on="admin_name_norm", right_on="admin1_norm")
-        for col in ["events","fatalities","population_exposure","displaced","displaced_in","displaced_from",score_col]:
-            if col in merged_p.columns:
-                merged_p[col] = pd.to_numeric(merged_p[col], errors="coerce").fillna(0)
-        if rank_col in merged_p.columns:
-            merged_p[rank_col] = pd.to_numeric(merged_p[rank_col], errors="coerce")
-        merged_p = repair_geometries(merged_p)
-
-        minx,miny,maxx,maxy = merged_p.total_bounds
-        px_ = (maxx-minx)*0.1 if maxx>minx else 1
-        py_ = (maxy-miny)*0.1 if maxy>miny else 1
-
-        top_row      = merged_p.sort_values(score_col, ascending=False).head(1)
-        highest_area = top_row["admin_name"].iloc[0]  if not top_row.empty else "—"
-        highest_sc   = float(top_row[score_col].iloc[0]) if not top_row.empty else 0.0
-        avg_sc       = float(merged_p[score_col].fillna(0).mean())
-        total_disp   = float(merged_p["displaced"].sum()) if "displaced" in merged_p.columns else 0.0
+        total_priority = float(merged["priority_score_country"].sum())
+        total_disp = float(merged["displaced"].sum())
+        total_ev = int(merged["events"].sum())
 
         st.markdown(f"""
         <div class="kpi-row">
-          <div class="kpi-card">
+          <div class="kpi-card gold">
             <div class="kpi-accent"></div>
-            <div class="kpi-label">Highest Priority Area</div>
-            <div class="kpi-value" style="font-size:20px">{highest_area}</div>
-            <div class="kpi-sub">Top priority zone</div>
-          </div>
-          <div class="kpi-card warm">
-            <div class="kpi-accent"></div>
-            <div class="kpi-label">Highest Score</div>
-            <div class="kpi-value">{highest_sc:.3f}</div>
-            <div class="kpi-sub">Priority index</div>
+            <div class="kpi-label">Priority Sum</div>
+            <div class="kpi-value">{total_priority:.2f}</div>
+            <div class="kpi-sub">Country-normalized</div>
           </div>
           <div class="kpi-card teal">
             <div class="kpi-accent"></div>
-            <div class="kpi-label">Average Score</div>
-            <div class="kpi-value">{avg_sc:.3f}</div>
-            <div class="kpi-sub">Country average</div>
-          </div>
-          <div class="kpi-card gold">
-            <div class="kpi-accent"></div>
-            <div class="kpi-label">Total Displaced</div>
+            <div class="kpi-label">Displaced</div>
             <div class="kpi-value">{fmt_big(total_disp)}</div>
-            <div class="kpi-sub">People displaced</div>
+            <div class="kpi-sub">Priority layer</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-accent"></div>
+            <div class="kpi-label">Events</div>
+            <div class="kpi-value">{total_ev:,}</div>
+            <div class="kpi-sub">{selected_month} {selected_year}</div>
           </div>
         </div>
         """, unsafe_allow_html=True)
 
-        base_df = merged_p.copy()
-        plot_df = merged_p[merged_p[score_col]>0].copy()
-        for ec in ["displaced_in","displaced_from"]:
-            for d in [base_df, plot_df]:
-                if ec not in d.columns: d[ec] = 0
+        if selected_metric in ["priority_score_country", "priority_score_global"]:
+            cscale = SCALE_BLUE
+            fmt_fn = lambda v: f"{v:.3f}"
+        elif selected_metric == "fatalities":
+            cscale = SCALE_WARM
+            fmt_fn = fmt_big
+        elif selected_metric == "population_exposure":
+            cscale = SCALE_GOLD
+            fmt_fn = fmt_big
+        else:
+            cscale = SCALE_TEAL
+            fmt_fn = fmt_big
 
-        real_max = float(plot_df[score_col].max()) if not plot_df.empty else 1.0
-        if real_max <= 0: real_max = 1.0
-
-        fig_p = go.Figure()
-        cd_cols = ["events","fatalities","displaced_in","displaced_from","population_exposure",score_col]
-
-        fig_p.add_trace(go.Choropleth(
-            geojson=json.loads(base_df.to_json()),
-            locations=base_df["admin_name"], z=[0]*len(base_df),
-            featureidkey="properties.admin_name",
-            colorscale=[[0,"#f4f7fb"],[1,"#f4f7fb"]],
-            zmin=0, zmax=1, showscale=False,
-            marker_line_width=0, marker_line_color="rgba(0,0,0,0)",
-            customdata=base_df[cd_cols].fillna(0).astype(float).values,
-            hovertemplate=(
-                "<b>%{location}</b><br>events=%{customdata[0]:.0f}<br>"
-                "fatalities=%{customdata[1]:.0f}<br>displaced in=%{customdata[2]:,.0f}<br>"
-                "displaced from=%{customdata[3]:,.0f}<br>exposure=%{customdata[4]:,.0f}<br>"
-                "priority score=%{customdata[5]:.3f}<extra></extra>"
-            ),
-        ))
-        if not plot_df.empty:
-            fig_p.add_trace(go.Choropleth(
-                geojson=json.loads(plot_df.to_json()),
-                locations=plot_df["admin_name"], z=plot_df[score_col],
-                featureidkey="properties.admin_name",
-                colorscale=SCALE_BLUE, zmin=0, zmax=real_max,
-                marker_line_width=0, marker_line_color="rgba(0,0,0,0)",
-                colorbar=dict(title="Priority",
-                              tickfont=dict(family="Inter",size=10,color="#5a6577"),
-                              title_font=dict(family="Inter",size=11,color="#1b2230"),
-                              len=0.6, thickness=10, outlinewidth=0),
-                customdata=plot_df[cd_cols].fillna(0).astype(float).values,
-                hovertemplate=(
-                    "<b>%{location}</b><br>events=%{customdata[0]:.0f}<br>"
-                    "fatalities=%{customdata[1]:.0f}<br>displaced in=%{customdata[2]:,.0f}<br>"
-                    "displaced from=%{customdata[3]:,.0f}<br>exposure=%{customdata[4]:,.0f}<br>"
-                    "priority score=%{customdata[5]:.3f}<extra></extra>"
-                ),
-            ))
-
-        fig_p.update_geos(**light_geo_layout([minx-px_,maxx+px_],[miny-py_,maxy+py_]))
-        fig_p.update_layout(
-            **{**LIGHT_MAP_LAYOUT,
-               "title":{"text":f"{selected_country_name} — Priority Map  ·  {selected_month} {selected_year}",
-                        "font":{"family":"Playfair Display","size":16,"color":"#1b2230"},"x":0.02,"xanchor":"left"},
-               "height":700},
+        fig = px.choropleth(
+            merged,
+            geojson=json.loads(merged.to_json()),
+            locations="admin_name_norm",
+            featureidkey="properties.admin_name_norm",
+            color=selected_metric,
+            color_continuous_scale=cscale,
+            hover_name="admin_name",
+            hover_data={
+                "events":True,"fatalities":True,"displaced":True,
+                "population_exposure":True,"priority_score_country":":.3f",
+                "priority_score_global":":.3f","displaced_in":True,
+                "displaced_from":True,"admin_name_norm":False,
+            },
+            projection="mercator",
+            title=f"{selected_country_name} — {metric_label(selected_metric)} by Admin1",
         )
-        add_boundaries(fig_p, merged_p)
-        add_country_outline(fig_p, merged_p)
-        st.plotly_chart(fig_p, use_container_width=True, key=f"{selected_iso3}_priority_chart")
+        fig.update_traces(marker_line_color="rgba(27,34,48,0.25)", marker_line_width=0.8)
+        fig.update_geos(
+            showcountries=False, showcoastlines=False, showframe=False,
+            bgcolor="#ffffff", showocean=False, showland=True,
+            landcolor="#fafbfd", fitbounds="locations",
+        )
+        zoom_geo_to_gdf(fig, merged)
+        fig.update_layout(
+            **{**LIGHT_MAP_LAYOUT, "height":620},
+            coloraxis_colorbar=dict(
+                title=metric_label(selected_metric),
+                tickfont=dict(family="Inter", size=10, color="#5a6577"),
+                title_font=dict(family="Inter", size=11, color="#1b2230"),
+            )
+        )
+        st.plotly_chart(fig, use_container_width=True, key="country_priority_map")
 
-        st.markdown('<div class="section-title"><span class="section-dot"></span>Top 10 Areas by Priority</div>',
-                    unsafe_allow_html=True)
-        top_p = (merged_p[["admin_name",score_col,rank_col,class_col]]
-                 .sort_values([score_col,"admin_name"], ascending=[False,True])
-                 .head(10).reset_index(drop=True))
-        render_top10_grid(top_p, "admin_name", score_col, fmt_fn=lambda v: f"{v:.3f}")
+        st.markdown(
+            f'<div class="section-title"><span class="section-dot"></span>Top Admin1 by {metric_label(selected_metric)}</div>',
+            unsafe_allow_html=True
+        )
+        top_admin = merged.sort_values(selected_metric, ascending=False)[["admin_name", selected_metric]].head(10).reset_index(drop=True)
+        render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_fn)
