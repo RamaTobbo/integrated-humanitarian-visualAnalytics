@@ -675,6 +675,44 @@ def default_latest_period_with_year_bounds(df, min_year=MIN_YEAR, max_year=MAX_Y
     last = temp.iloc[-1]
     return int(last["year"]), str(last["month"])
 
+def build_available_periods(*frames):
+    period_frames = []
+    for frame in frames:
+        if frame is None or frame.empty:
+            continue
+        if not {"year", "month_num", "month"}.issubset(frame.columns):
+            continue
+        period_frame = frame[["year", "month_num", "month"]].copy()
+        period_frame["year"] = pd.to_numeric(period_frame["year"], errors="coerce")
+        period_frame["month_num"] = pd.to_numeric(period_frame["month_num"], errors="coerce")
+        period_frame["month"] = period_frame["month"].astype(str).str.strip()
+        period_frame = period_frame[
+            period_frame["year"].notna() &
+            period_frame["month_num"].notna() &
+            period_frame["month"].ne("") &
+            period_frame["month"].ne("nan")
+        ].copy()
+        if period_frame.empty:
+            continue
+        period_frame["year"] = period_frame["year"].astype(int)
+        period_frame["month_num"] = period_frame["month_num"].astype(int)
+        period_frame = period_frame[
+            (period_frame["year"] >= MIN_YEAR) &
+            (period_frame["year"] <= MAX_YEAR)
+        ].copy()
+        if not period_frame.empty:
+            period_frames.append(period_frame)
+
+    if not period_frames:
+        return pd.DataFrame(columns=["year", "month_num", "month"])
+
+    return (
+        pd.concat(period_frames, ignore_index=True)
+        .drop_duplicates()
+        .sort_values(["year", "month_num"])
+        .reset_index(drop=True)
+    )
+
 def ensure_required_files():
     required = [
         world_geojson_path, conflict_country_path, conflict_admin_path,
@@ -3144,10 +3182,16 @@ if st.session_state["view"] == "world":
         base_df = base_df[base_df["country_norm"] == cnorm].copy()
 
     st.sidebar.markdown('<div class="sidebar-section">Period</div>', unsafe_allow_html=True)
-    world_years = sorted([y for y in base_df["year"].dropna().unique() if MIN_YEAR <= y <= MAX_YEAR])
+    world_periods = build_available_periods(base_df)
+    world_years = sorted(world_periods["year"].dropna().unique().tolist())
     if not world_years:
         st.warning("No years available.")
         st.stop()
+
+    if st.session_state["world_year"] not in world_years:
+        latest_year, latest_month = default_latest_period_with_year_bounds(world_periods)
+        st.session_state["world_year"] = latest_year
+        st.session_state["world_month"] = latest_month
 
     selected_year = st.sidebar.selectbox(
         "Year",
@@ -3158,7 +3202,7 @@ if st.session_state["view"] == "world":
     st.session_state["world_year"] = selected_year
 
     avail_months = (
-        base_df[base_df["year"] == selected_year][["month_num","month"]]
+        world_periods[world_periods["year"] == selected_year][["month_num","month"]]
         .drop_duplicates()
         .sort_values("month_num")
     )
@@ -3166,6 +3210,9 @@ if st.session_state["view"] == "world":
     if not month_list:
         st.warning("No months available.")
         st.stop()
+
+    if st.session_state["world_month"] not in month_list:
+        st.session_state["world_month"] = month_list[-1]
 
     selected_month = st.sidebar.selectbox(
         "Month",
@@ -3596,15 +3643,21 @@ else:
         st.warning("No admin-level data found for this country.")
         st.stop()
 
-    period_frames = []
-    for source_df in (country_conflict_rows, country_priority_rows):
-        if not source_df.empty:
-            period_frames.append(source_df[["year", "month_num", "month"]].copy())
-    available_periods = pd.concat(period_frames, ignore_index=True).drop_duplicates() if period_frames else pd.DataFrame()
-    available_source = available_periods if not available_periods.empty else (
-        country_conflict_rows if not country_conflict_rows.empty else country_priority_rows
+    st.sidebar.markdown('<div class="sidebar-section">Country View</div>', unsafe_allow_html=True)
+    country_mode = st.sidebar.radio("Mode", ["Conflict", "Priority"], horizontal=True)
+
+    selected_country_norm = canonical_country_norm(selected_country_name)
+    priority_periods = build_available_periods(
+        country_priority_rows,
+        displacement_dest[displacement_dest["country"] == selected_country_norm],
+        displacement_origin[displacement_origin["country"] == selected_country_norm],
     )
-    avail_years = sorted([y for y in available_source["year"].dropna().unique() if MIN_YEAR <= y <= MAX_YEAR])
+    available_source = (
+        build_available_periods(country_conflict_rows)
+        if country_mode == "Conflict"
+        else priority_periods
+    )
+    avail_years = sorted(available_source["year"].dropna().unique().tolist())
 
     if not avail_years:
         st.warning("No years available.")
@@ -3634,6 +3687,9 @@ else:
         st.warning("No months available.")
         st.stop()
 
+    if st.session_state["country_month"] not in month_list:
+        st.session_state["country_month"] = month_list[-1]
+
     selected_month = st.sidebar.selectbox(
         "Month",
         month_list,
@@ -3641,9 +3697,6 @@ else:
               if st.session_state["country_month"] in month_list else len(month_list)-1,
     )
     st.session_state["country_month"] = selected_month
-
-    st.sidebar.markdown('<div class="sidebar-section">Country View</div>', unsafe_allow_html=True)
-    country_mode = st.sidebar.radio("Mode", ["Conflict", "Priority"], horizontal=True)
 
     st.markdown(f"""
     <div class="dash-header">
