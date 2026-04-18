@@ -10,6 +10,7 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 # ──────────────────────────────────────────────────
@@ -730,6 +731,412 @@ def render_top10_grid(df, name_col, val_col, fmt_fn=None):
         + ''.join(cards) + '</div>',
         unsafe_allow_html=True,
     )
+
+def render_bubble_story(selected_country_name, boundary_gdf):
+    cnorm = canonical_country_norm(selected_country_name)
+
+    # --- aggregate displacement arrivals & departures over full period ---
+    disp_agg = (
+        displacement_dest[displacement_dest["country"] == cnorm]
+        .groupby("admin1_norm", as_index=False)["displaced_in"].sum()
+    )
+    orig_agg = (
+        displacement_origin[displacement_origin["country"] == cnorm]
+        .groupby("admin1_norm", as_index=False)["displaced_from"].sum()
+    )
+
+    # --- aggregate priority over full period ---
+    pri_sub = admin1_priority[admin1_priority["country_norm"] == cnorm].copy()
+    if pri_sub.empty:
+        pri_agg = pd.DataFrame(columns=["admin1_norm"])
+    else:
+        agg_d = {"events": "sum", "fatalities": "sum"}
+        for c in ["priority_score_country", "displaced", "population_exposure"]:
+            if c in pri_sub.columns:
+                agg_d[c] = "mean" if "score" in c else "sum"
+        pri_agg = pri_sub.groupby("admin1_norm", as_index=False).agg(agg_d)
+
+    bdf = disp_agg.merge(orig_agg, how="outer", on="admin1_norm")
+    bdf = bdf.merge(pri_agg, how="outer", on="admin1_norm")
+
+    # display names from boundary
+    name_map = dict(zip(boundary_gdf["admin_name_norm"], boundary_gdf["admin_name"]))
+    bdf["display_name"] = bdf["admin1_norm"].map(name_map).fillna(
+        bdf["admin1_norm"].apply(lambda x: str(x).replace("-", " ").title() if pd.notna(x) else "")
+    )
+
+    for col in ["displaced_in", "displaced_from", "events", "fatalities",
+                "priority_score_country", "displaced", "population_exposure"]:
+        if col not in bdf.columns:
+            bdf[col] = 0.0
+        bdf[col] = pd.to_numeric(bdf[col], errors="coerce").fillna(0.0)
+
+    bdf = bdf[bdf["admin1_norm"].notna() & (bdf["admin1_norm"].astype(str) != "nan")].copy()
+    bdf = bdf.sort_values("displaced_in", ascending=False).reset_index(drop=True)
+
+    if bdf.empty:
+        st.info("No displacement data available for this country.")
+        return
+
+    # --- bubble sizes ---
+    max_disp = float(bdf["displaced_in"].max())
+    use_priority = max_disp <= 0
+    size_col = "priority_score_country" if use_priority else "displaced_in"
+    max_v = float(bdf[size_col].max()) or 1.0
+    MAX_D, MIN_D = 90.0, 12.0
+    bdf["px_d"] = bdf[size_col].apply(
+        lambda v: float(max(MIN_D, (max(0.0, v) / max_v) ** 0.5 * MAX_D))
+    )
+
+    # --- phyllotaxis layout ---
+    n = len(bdf)
+    golden_angle = math.pi * (3.0 - math.sqrt(5.0))
+    spread = MAX_D * 1.65
+    bdf["x"] = [spread * math.sqrt(i) * math.cos(i * golden_angle) for i in range(n)]
+    bdf["y"] = [spread * math.sqrt(i) * math.sin(i * golden_angle) for i in range(n)]
+
+    all_coords = list(bdf["x"]) + list(bdf["y"])
+    axis_r = (max(abs(v) for v in all_coords) + MAX_D + 45) if n > 0 else 300.0
+
+    pri_max = float(max(bdf["priority_score_country"].max(), 0.001))
+    bdf["label"] = bdf.apply(
+        lambda r: str(r["display_name"]).split()[0] if r["px_d"] >= 36 else "", axis=1
+    )
+
+    # --- size legend (3 reference circles, bottom-right) ---
+    leg_vals = [max_v, max_v * 0.30, max_v * 0.08]
+    leg_ds = [float(max(MIN_D, (v / max_v) ** 0.5 * MAX_D)) for v in leg_vals]
+    lx = axis_r * 0.80
+    leg_y = [-axis_r * 0.46, -axis_r * 0.62, -axis_r * 0.73]
+
+    fig = go.Figure()
+
+    # bubbles
+    fig.add_trace(go.Scatter(
+        x=bdf["x"], y=bdf["y"],
+        mode="markers+text",
+        marker=dict(
+            size=bdf["px_d"], sizemode="diameter",
+            color=bdf["priority_score_country"],
+            colorscale=SCALE_BLUE, cmin=0.0, cmax=pri_max,
+            line=dict(width=1.5, color="rgba(255,255,255,0.5)"),
+            opacity=0.87,
+            colorbar=dict(
+                title=dict(text="Priority", font=dict(family="Inter", size=11, color="#1b2230")),
+                tickfont=dict(family="Inter", size=9, color="#5a6577"),
+                len=0.42, thickness=10, outlinewidth=0, x=1.01,
+            ),
+        ),
+        text=bdf["label"],
+        textfont=dict(family="Inter", size=9, color="rgba(255,255,255,0.95)"),
+        textposition="middle center",
+        customdata=bdf[["display_name", "displaced_in", "displaced_from",
+                         "priority_score_country", "events", "fatalities"]].values,
+        hovertemplate=(
+            "<b>%{customdata[0]}</b><br>"
+            "Displaced in: <b>%{customdata[1]:,.0f}</b><br>"
+            "Displaced out: %{customdata[2]:,.0f}<br>"
+            "Priority score: %{customdata[3]:.3f}<br>"
+            "Events: %{customdata[4]:,.0f}  ·  Fatalities: %{customdata[5]:,.0f}"
+            "<extra></extra>"
+        ),
+        showlegend=False, name="",
+    ))
+
+    # size legend circles
+    fig.add_trace(go.Scatter(
+        x=[lx, lx, lx], y=leg_y, mode="markers",
+        marker=dict(size=leg_ds, sizemode="diameter",
+                    color="rgba(175,188,205,0.40)",
+                    line=dict(width=1.5, color="#b0b9c7")),
+        hoverinfo="skip", showlegend=False,
+    ))
+    # size legend labels
+    fig.add_trace(go.Scatter(
+        x=[axis_r * 0.93, axis_r * 0.93, axis_r * 0.93], y=leg_y,
+        mode="text",
+        text=[fmt_big(v) for v in leg_vals],
+        textfont=dict(family="Inter", size=9, color="#8893a4"),
+        textposition="middle right",
+        hoverinfo="skip", showlegend=False,
+    ))
+
+    fig.update_layout(
+        paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+        font=dict(family="Inter", color="#5a6577", size=11),
+        xaxis=dict(visible=False, range=[-axis_r, axis_r], fixedrange=True),
+        yaxis=dict(visible=False, range=[-axis_r, axis_r],
+                   scaleanchor="x", scaleratio=1, fixedrange=True),
+        margin=dict(l=10, r=90, t=10, b=10),
+        height=580,
+        hoverlabel=dict(
+            bgcolor="white", bordercolor="#e4e8ef",
+            font=dict(family="Inter", size=12, color="#1b2230"),
+        ),
+    )
+    st.plotly_chart(fig, use_container_width=True, key=f"bubble_{cnorm}")
+
+
+def render_story_overview(selected_country_name, boundary_gdf, total_arrived, total_departed):
+    cnorm = canonical_country_norm(selected_country_name)
+
+    total_events_full = float(admin_conflict[admin_conflict["country_norm"] == cnorm]["events"].sum())
+    total_fat_full    = float(admin_conflict[admin_conflict["country_norm"] == cnorm]["fatalities"].sum())
+
+    st.markdown(f"""
+    <div style="padding:20px 0 10px 0;">
+      <p style="font-family:'Playfair Display',serif;font-size:22px;font-weight:600;color:#1b2230;line-height:1.4;margin:0 0 10px 0;">
+        The full picture of {selected_country_name}, 2024–2026
+      </p>
+      <p style="font-family:'Inter',sans-serif;font-size:14px;color:#5a6577;line-height:1.85;margin:0;max-width:640px;">
+        Across all regions, <strong style="color:#1b2230;">{fmt_big(total_arrived)}</strong> people
+        arrived and <strong style="color:#1b2230;">{fmt_big(total_departed)}</strong> departed.
+        The conflict left <strong style="color:#b8703a;">{fmt_big(total_fat_full)}</strong> fatalities
+        across <strong style="color:#2c4a6e;">{fmt_big(total_events_full)}</strong> recorded events.
+        Below are the ten admin areas that absorbed the most displaced people.
+      </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # KPI chips
+    st.markdown(f"""
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin:10px 0 22px 0;">
+      <div style="background:#e8eef6;border-radius:10px;padding:12px 20px;">
+        <div style="font-family:'Inter',sans-serif;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#5a7aa0;margin-bottom:4px;">Displaced In</div>
+        <div style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#2c4a6e;">{fmt_big(total_arrived)}</div>
+      </div>
+      <div style="background:#fdf3eb;border-radius:10px;padding:12px 20px;">
+        <div style="font-family:'Inter',sans-serif;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#b8703a;margin-bottom:4px;">Displaced Out</div>
+        <div style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#b8703a;">{fmt_big(total_departed)}</div>
+      </div>
+      <div style="background:#eef1f6;border-radius:10px;padding:12px 20px;">
+        <div style="font-family:'Inter',sans-serif;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#5a6577;margin-bottom:4px;">Conflict Events</div>
+        <div style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#1b2230;">{fmt_big(total_events_full)}</div>
+      </div>
+      <div style="background:#fdf3eb;border-radius:10px;padding:12px 20px;">
+        <div style="font-family:'Inter',sans-serif;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#b8703a;margin-bottom:4px;">Fatalities</div>
+        <div style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#7a4418;">{fmt_big(total_fat_full)}</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Top admin1 by displaced arrivals — horizontal bar
+    disp_agg = (
+        displacement_dest[displacement_dest["country"] == cnorm]
+        .groupby("admin1_norm", as_index=False)["displaced_in"].sum()
+    )
+    if disp_agg.empty:
+        st.info("No displacement arrival data available.")
+        return
+
+    name_map = {}
+    if boundary_gdf is not None and not boundary_gdf.empty:
+        name_map = dict(zip(boundary_gdf["admin_name_norm"], boundary_gdf["admin_name"]))
+    disp_agg["display_name"] = disp_agg["admin1_norm"].map(name_map).fillna(
+        disp_agg["admin1_norm"].apply(lambda x: str(x).replace("-", " ").title())
+    )
+    top = disp_agg.sort_values("displaced_in", ascending=False).head(10)
+
+    bar_colors = [
+        f"rgba(44,74,110,{max(0.35, 1.0 - i*0.07):.2f})" for i in range(len(top))
+    ]
+
+    fig = go.Figure(go.Bar(
+        y=top["display_name"][::-1],
+        x=top["displaced_in"][::-1],
+        orientation="h",
+        marker=dict(color=bar_colors[::-1], line=dict(width=0)),
+        text=[fmt_big(v) for v in top["displaced_in"][::-1]],
+        textposition="inside",
+        textfont=dict(family="Inter", size=11, color="rgba(255,255,255,0.9)"),
+        hovertemplate="<b>%{y}</b><br>Displaced in: %{x:,.0f}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+        font=dict(family="Inter", color="#5a6577", size=11),
+        margin=dict(l=10, r=30, t=10, b=30),
+        height=max(280, len(top) * 34),
+        xaxis=dict(
+            showgrid=True, gridcolor="#eef1f6", gridwidth=1,
+            showline=False, zeroline=False,
+            tickfont=dict(family="Inter", size=10),
+        ),
+        yaxis=dict(
+            showgrid=False, showline=False,
+            tickfont=dict(family="Inter", size=11, color="#1b2230"),
+        ),
+        hoverlabel=dict(bgcolor="white", bordercolor="#e4e8ef",
+                        font=dict(family="Inter", size=12, color="#1b2230")),
+    )
+    st.plotly_chart(fig, use_container_width=True, key=f"story_bar_{cnorm}")
+
+
+def render_story_priority_scatter(selected_country_name, boundary_gdf):
+    cnorm = canonical_country_norm(selected_country_name)
+
+    pri_sub = admin1_priority[admin1_priority["country_norm"] == cnorm].copy()
+    if pri_sub.empty:
+        st.info("No priority data available for this country.")
+        return
+
+    agg_d: dict = {"events": "sum", "fatalities": "sum"}
+    for c in ["priority_score_country", "displaced", "population_exposure"]:
+        if c in pri_sub.columns:
+            agg_d[c] = "mean" if "score" in c else "sum"
+    sdf = pri_sub.groupby("admin1_norm", as_index=False).agg(agg_d)
+
+    disp_agg = (
+        displacement_dest[displacement_dest["country"] == cnorm]
+        .groupby("admin1_norm", as_index=False)["displaced_in"].sum()
+    )
+    sdf = sdf.merge(disp_agg, how="left", on="admin1_norm")
+
+    name_map = {}
+    if boundary_gdf is not None and not boundary_gdf.empty:
+        name_map = dict(zip(boundary_gdf["admin_name_norm"], boundary_gdf["admin_name"]))
+    sdf["display_name"] = sdf["admin1_norm"].map(name_map).fillna(
+        sdf["admin1_norm"].apply(lambda x: str(x).replace("-", " ").title())
+    )
+
+    for col in ["displaced_in", "fatalities", "priority_score_country", "population_exposure", "events"]:
+        if col not in sdf.columns:
+            sdf[col] = 0.0
+        sdf[col] = pd.to_numeric(sdf[col], errors="coerce").fillna(0.0)
+
+    sdf = sdf[sdf["priority_score_country"] > 0].copy()
+    if sdf.empty:
+        st.info("No priority score data to display.")
+        return
+
+    max_fat = float(sdf["fatalities"].max()) or 1.0
+    MAX_SZ, MIN_SZ = 55.0, 8.0
+    sdf["bubble_sz"] = sdf["fatalities"].apply(
+        lambda v: float(max(MIN_SZ, (max(0, v) / max_fat) ** 0.5 * MAX_SZ))
+    )
+
+    # Annotate outliers: top 3 by priority + top 3 by displaced_in
+    top_pri = set(sdf.nlargest(3, "priority_score_country")["admin1_norm"])
+    top_disp = set(sdf.nlargest(3, "displaced_in")["admin1_norm"])
+    highlight = top_pri | top_disp
+    sdf["label"] = sdf.apply(
+        lambda r: r["display_name"] if r["admin1_norm"] in highlight else "", axis=1
+    )
+
+    max_exp = float(sdf["population_exposure"].max()) or 1.0
+
+    st.markdown(f"""
+    <div style="padding:20px 0 10px 0;">
+      <p style="font-family:'Playfair Display',serif;font-size:22px;font-weight:600;color:#1b2230;line-height:1.4;margin:0 0 10px 0;">
+        Why does priority differ across regions?
+      </p>
+      <p style="font-family:'Inter',sans-serif;font-size:14px;color:#5a6577;line-height:1.85;margin:0;max-width:660px;">
+        Humanitarian priority is not simply a function of how many people were displaced.
+        Regions with <em>fewer arrivals</em> can rank highest if they also face intense conflict,
+        high fatality rates, or large population exposure. Each circle below is one admin area —
+        <strong>horizontal position</strong> shows displaced arrivals,
+        <strong>vertical position</strong> shows priority score,
+        <strong>circle size</strong> scales with fatalities, and
+        <strong>color</strong> reflects population exposure.
+        Areas that sit <em>high but left</em> are priority hot-spots driven by conflict intensity, not volume.
+      </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=sdf["displaced_in"],
+        y=sdf["priority_score_country"],
+        mode="markers+text",
+        marker=dict(
+            size=sdf["bubble_sz"],
+            sizemode="diameter",
+            color=sdf["population_exposure"],
+            colorscale=SCALE_WARM,
+            cmin=0, cmax=max_exp,
+            opacity=0.82,
+            line=dict(width=1.2, color="rgba(255,255,255,0.6)"),
+            colorbar=dict(
+                title=dict(text="Population<br>Exposure", font=dict(family="Inter", size=10, color="#1b2230")),
+                tickfont=dict(family="Inter", size=9, color="#5a6577"),
+                len=0.5, thickness=10, outlinewidth=0, x=1.01,
+            ),
+        ),
+        text=sdf["label"],
+        textfont=dict(family="Inter", size=9, color="#1b2230"),
+        textposition="top center",
+        customdata=sdf[["display_name", "displaced_in", "fatalities",
+                         "priority_score_country", "population_exposure", "events"]].values,
+        hovertemplate=(
+            "<b>%{customdata[0]}</b><br>"
+            "Displaced in: <b>%{customdata[1]:,.0f}</b><br>"
+            "Priority score: <b>%{customdata[3]:.3f}</b><br>"
+            "Fatalities: %{customdata[2]:,.0f}<br>"
+            "Pop. exposure: %{customdata[4]:,.0f}<br>"
+            "Events: %{customdata[5]:,.0f}"
+            "<extra></extra>"
+        ),
+        showlegend=False,
+    ))
+
+    # Quadrant reference lines at medians
+    med_x = float(sdf["displaced_in"].median())
+    med_y = float(sdf["priority_score_country"].median())
+    x_max = float(sdf["displaced_in"].max()) * 1.08
+    y_max = float(sdf["priority_score_country"].max()) * 1.12
+
+    for xv, yv, lbl, anchor in [
+        (x_max * 0.55, y_max * 0.97, "HIGH PRIORITY · HIGH DISPLACEMENT", "center"),
+        (x_max * 0.05, y_max * 0.97, "HIGH PRIORITY · LOW DISPLACEMENT", "left"),
+        (x_max * 0.55, y_max * 0.04, "LOW PRIORITY · HIGH DISPLACEMENT", "center"),
+    ]:
+        fig.add_annotation(
+            x=xv, y=yv, text=lbl,
+            showarrow=False,
+            font=dict(family="Inter", size=8, color="#b0b9c7"),
+            xanchor=anchor, yanchor="top",
+        )
+
+    fig.add_shape(type="line", x0=med_x, x1=med_x, y0=0, y1=y_max,
+                  line=dict(color="#e4e8ef", width=1, dash="dot"))
+    fig.add_shape(type="line", x0=0, x1=x_max, y0=med_y, y1=med_y,
+                  line=dict(color="#e4e8ef", width=1, dash="dot"))
+
+    fig.update_layout(
+        paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+        font=dict(family="Inter", color="#5a6577", size=11),
+        margin=dict(l=50, r=90, t=20, b=50),
+        height=500,
+        xaxis=dict(
+            title=dict(text="Total Displaced Arrivals (2024–2026)", font=dict(family="Inter", size=11, color="#5a6577")),
+            showgrid=True, gridcolor="#f1f4f9", zeroline=False, showline=False,
+            tickfont=dict(family="Inter", size=10),
+        ),
+        yaxis=dict(
+            title=dict(text="Avg Priority Score", font=dict(family="Inter", size=11, color="#5a6577")),
+            showgrid=True, gridcolor="#f1f4f9", zeroline=False, showline=False,
+            tickfont=dict(family="Inter", size=10),
+        ),
+        hoverlabel=dict(bgcolor="white", bordercolor="#e4e8ef",
+                        font=dict(family="Inter", size=12, color="#1b2230")),
+    )
+    st.plotly_chart(fig, use_container_width=True, key=f"story_scatter_{cnorm}")
+
+    # Footer callout
+    high_pri_low_disp = sdf[
+        (sdf["priority_score_country"] >= med_y) & (sdf["displaced_in"] <= med_x)
+    ].nlargest(3, "priority_score_country")
+    if not high_pri_low_disp.empty:
+        names = ", ".join(high_pri_low_disp["display_name"].tolist())
+        st.markdown(f"""
+        <div style="margin-top:6px;padding:12px 16px;background:#fdf3eb;border-left:3px solid #b8703a;border-radius:0 8px 8px 0;">
+          <span style="font-family:'Inter',sans-serif;font-size:12px;color:#7a4418;">
+            <strong>Conflict-driven priority:</strong> {names} rank high on priority despite
+            relatively lower displacement — driven by conflict intensity and fatalities.
+          </span>
+        </div>
+        """, unsafe_allow_html=True)
+
 
 def build_mapbox_center(gdf, default_lat=20, default_lon=10):
     if gdf is None or gdf.empty or "geometry" not in gdf.columns:
@@ -1842,3 +2249,53 @@ else:
             st.info(f"No admin areas with {metric_label(selected_metric).lower()} above 0 for this period.")
         else:
             render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_fn)
+
+    # ─────────────────────────────────────────────
+    # DISPLACEMENT STORY — full period 2024–2026
+    # ─────────────────────────────────────────────
+    cnorm_story = canonical_country_norm(selected_country_name)
+    total_arrived = float(
+        displacement_dest[displacement_dest["country"] == cnorm_story]["displaced_in"].sum()
+    )
+    total_departed = float(
+        displacement_origin[displacement_origin["country"] == cnorm_story]["displaced_from"].sum()
+    )
+
+    st.markdown(
+        '<div class="section-title" style="margin-top:36px;">'
+        '<span class="section-dot"></span>Displacement Story 2024–2026</div>',
+        unsafe_allow_html=True,
+    )
+
+    tab_overview, tab_bubbles, tab_priority = st.tabs([
+        "Overview",
+        "Displacement & Pressure",
+        "Why Priority Changes",
+    ])
+
+    with tab_overview:
+        render_story_overview(selected_country_name, boundary_gdf, total_arrived, total_departed)
+
+    with tab_bubbles:
+        st.markdown(f"""
+        <div style="padding:20px 0 10px 0;">
+          <p style="font-family:'Playfair Display',serif;font-size:22px;font-weight:600;color:#1b2230;line-height:1.4;margin:0 0 10px 0;">
+            Where are people moving across {selected_country_name}?
+          </p>
+          <p style="font-family:'Inter',sans-serif;font-size:14px;color:#5a6577;line-height:1.85;margin:0 0 4px 0;max-width:640px;">
+            Each circle represents one admin1 area.
+            <strong>Size</strong> reflects total displaced arrivals 2024–2026.
+            <strong>Color</strong> shows average priority score — darker navy means higher humanitarian priority.
+            The biggest circles absorbed the most people; the darkest faced the most urgent conditions.
+          </p>
+          <p style="font-family:'Inter',sans-serif;font-size:12px;color:#8893a4;line-height:1.6;margin:0;">
+            <strong style="color:#1b2230;">{fmt_big(total_arrived)}</strong> people arrived ·
+            <strong style="color:#1b2230;">{fmt_big(total_departed)}</strong> departed.
+            Hover any circle for the full breakdown.
+          </p>
+        </div>
+        """, unsafe_allow_html=True)
+        render_bubble_story(selected_country_name, boundary_gdf)
+
+    with tab_priority:
+        render_story_priority_scatter(selected_country_name, boundary_gdf)
