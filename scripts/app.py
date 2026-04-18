@@ -1030,6 +1030,15 @@ if st.session_state["view"] == "world":
     )
     st.session_state["world_country"] = selected_country
 
+    if selected_country != "All" and st.sidebar.button("← Back to World Map", key="world_reset_to_all"):
+        st.session_state.update({
+            "view": "world",
+            "world_country": "All",
+            "selected_iso3": None,
+            "selected_country_name": None,
+        })
+        st.rerun()
+
     base_df = source_df.copy()
     if selected_country != "All":
         cnorm = canonical_country_norm(selected_country)
@@ -1447,12 +1456,22 @@ else:
     selected_country_name = st.session_state["selected_country_name"]
 
     if not selected_iso3 or not selected_country_name:
-        st.session_state["view"] = "world"
+        st.session_state.update({
+            "view": "world",
+            "world_country": "All",
+            "selected_iso3": None,
+            "selected_country_name": None,
+        })
         st.rerun()
 
     st.sidebar.markdown('<div class="sidebar-section">Navigation</div>', unsafe_allow_html=True)
     if st.sidebar.button("← Back to World Map"):
-        st.session_state["view"] = "world"
+        st.session_state.update({
+            "view": "world",
+            "world_country": "All",
+            "selected_iso3": None,
+            "selected_country_name": None,
+        })
         st.rerun()
 
     boundary_gdf, boundary_name_col = load_country_admin1_boundary(selected_iso3)
