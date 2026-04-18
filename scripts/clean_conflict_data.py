@@ -1,44 +1,61 @@
 import pandas as pd
 from pathlib import Path
+import pycountry
 
 # ==================================================
 # PATHS
 # ==================================================
 historical_file = Path("data/raw/global/ACLED.csv")
-middle_east_file = Path("data/raw/global/Middle-East_aggregated_data_up_to_week_of-2026-03-21.xlsx")
+
+regional_files = [
+    Path("data/raw/global/regions_2026/Africa_aggregated_data_up_to_week_of-2026-03-21.xlsx"),
+    Path("data/raw/global/regions_2026/Europe-Central-Asia_aggregated_data_up_to_week_of-2026-03-28.xlsx"),
+    Path("data/raw/global/regions_2026/Latin-America-the-Caribbean_aggregated_data_up_to_week_of-2026-03-21.xlsx"),
+    Path("data/raw/global/regions_2026/Middle-East_aggregated_data_up_to_week_of-2026-03-21.xlsx"),
+    Path("data/raw/global/regions_2026/US-and-Canada_aggregated_data_up_to_week_of-2026-03-28.xlsx"),
+]
 
 output_dir = Path("data/cleaned/global")
 output_dir.mkdir(parents=True, exist_ok=True)
 
-# historical detailed admin file (same structure as before)
 output_main = output_dir / "conflict_standardized_monthlybytype.csv"
-
-# updated country file with 2024 + 2025 + 2026
 output_country = output_dir / "conflict_country_monthlybytype.csv"
-
-# new file for bubble maps / selected-country zoom / admin1 monthly view
-output_admin1_bubbles = output_dir / "middle_east_admin1_monthlybytype_with_centroids.csv"
+output_admin1 = output_dir / "admin1_monthlybytype_with_centroids.csv"
 
 # ==================================================
-# COUNTRY -> ISO NUMERIC CODE
-# app uses numeric ISO through the old "iso3" column
+# CONSTANTS
 # ==================================================
-COUNTRY_TO_ISO_NUMERIC = {
-    "Bahrain": 48,
-    "Iran": 364,
-    "Iraq": 368,
-    "Israel": 376,
-    "Jordan": 400,
-    "Kuwait": 414,
-    "Lebanon": 422,
-    "Oman": 512,
+MIN_YEAR = 2024
+MAX_YEAR = 2026
+
+# Fix names that pycountry may not resolve directly
+COUNTRY_FIXES = {
+    "United States of America": "United States",
+    "Russian Federation": "Russia",
+    "Türkiye": "Turkey",
+    "Czech Republic": "Czechia",
+    "Syrian Arab Republic": "Syria",
+    "Iran (Islamic Republic of)": "Iran",
+    "Venezuela (Bolivarian Republic of)": "Venezuela",
+    "Bolivia (Plurinational State of)": "Bolivia",
+    "United Republic of Tanzania": "Tanzania",
+    "Republic of Moldova": "Moldova",
+    "Lao People's Democratic Republic": "Laos",
+    "State of Palestine": "Palestine",
+    "Democratic Republic of Congo": "Congo, The Democratic Republic of the",
+    "DR Congo": "Congo, The Democratic Republic of the",
+    "Congo, Dem. Rep.": "Congo, The Democratic Republic of the",
+    "Congo, Rep.": "Congo",
+    "Republic of the Congo": "Congo",
+    "Myanmar (Burma)": "Myanmar",
+    "North Macedonia": "North Macedonia",
+    "Kosovo": "Kosovo",  # may remain unresolved in pycountry
+}
+
+# manual fallback for names pycountry may not resolve
+COUNTRY_TO_ISO_NUMERIC_FALLBACK = {
+    "Kosovo": 383,
     "Palestine": 275,
-    "Qatar": 634,
-    "Saudi Arabia": 682,
-    "Syria": 760,
-    "Turkey": 792,
-    "United Arab Emirates": 784,
-    "Yemen": 887,
 }
 
 # ==================================================
@@ -49,7 +66,6 @@ def read_table(path: Path) -> pd.DataFrame:
         return pd.read_csv(path)
     return pd.read_excel(path)
 
-
 def clean_text_cols(df: pd.DataFrame, cols):
     for col in cols:
         if col in df.columns:
@@ -57,10 +73,25 @@ def clean_text_cols(df: pd.DataFrame, cols):
             df[col] = df[col].replace({"nan": pd.NA, "None": pd.NA, "": pd.NA})
     return df
 
+def get_iso_numeric(country_name):
+    if pd.isna(country_name):
+        return None
+
+    name = str(country_name).strip()
+    name = COUNTRY_FIXES.get(name, name)
+
+    if name in COUNTRY_TO_ISO_NUMERIC_FALLBACK:
+        return COUNTRY_TO_ISO_NUMERIC_FALLBACK[name]
+
+    try:
+        country = pycountry.countries.lookup(name)
+        return int(country.numeric)
+    except Exception:
+        return None
 
 # ==================================================
 # 1) HISTORICAL ACLED EVENT-LEVEL DATA
-#    use this for detailed admin output and historical country output
+# keep only 2024-2025 from ACLED to avoid overlap with 2026 regional extension
 # ==================================================
 hist = read_table(historical_file)
 
@@ -75,11 +106,22 @@ rename_map_hist = {
     "event_date": "event_date",
     "event_type": "event_type",
     "fatalities": "fatalities",
+    "population_best": "population_best",
 }
 
 hist = hist.rename(columns=rename_map_hist)
 
-needed_hist = ["iso3", "country", "admin1", "admin2", "event_date", "event_type", "fatalities"]
+needed_hist = [
+    "iso3",
+    "country",
+    "admin1",
+    "admin2",
+    "event_date",
+    "event_type",
+    "fatalities",
+    "population_best",
+]
+
 missing_hist = [c for c in needed_hist if c not in hist.columns]
 if missing_hist:
     raise ValueError(f"Missing expected historical columns: {missing_hist}")
@@ -95,6 +137,7 @@ hist["month_num"] = hist["event_date"].dt.month
 hist["month"] = hist["event_date"].dt.strftime("%B")
 
 hist["fatalities"] = pd.to_numeric(hist["fatalities"], errors="coerce").fillna(0)
+hist["population_exposure"] = pd.to_numeric(hist["population_best"], errors="coerce").fillna(0)
 hist["iso3"] = pd.to_numeric(hist["iso3"], errors="coerce")
 
 hist = hist[
@@ -105,11 +148,11 @@ hist = hist[
 
 hist["iso3"] = hist["iso3"].astype(int)
 
-# keep historical part until end of 2025 to avoid overlap with 2026 extension
-hist = hist[hist["year"] <= 2025].copy()
+# only 2024-2025 from historical ACLED
+hist = hist[hist["year"].between(2024, 2025)].copy()
 
-# detailed monthly table with event type
-main_by_type = (
+# detailed monthly admin table
+hist_main_by_type = (
     hist.groupby(
         ["iso3", "country", "admin1", "admin2", "year", "month_num", "month", "event_type"],
         dropna=False,
@@ -117,12 +160,12 @@ main_by_type = (
     )
     .agg(
         events=("event_date", "size"),
-        fatalities=("fatalities", "sum")
+        fatalities=("fatalities", "sum"),
+        population_exposure=("population_exposure", "sum"),
     )
 )
 
-# detailed monthly table for ALL event types
-main_all = (
+hist_main_all = (
     hist.groupby(
         ["iso3", "country", "admin1", "admin2", "year", "month_num", "month"],
         dropna=False,
@@ -130,15 +173,15 @@ main_all = (
     )
     .agg(
         events=("event_date", "size"),
-        fatalities=("fatalities", "sum")
+        fatalities=("fatalities", "sum"),
+        population_exposure=("population_exposure", "sum"),
     )
 )
 
-main_all["event_type"] = "All"
+hist_main_all["event_type"] = "All"
+hist_main = pd.concat([hist_main_all, hist_main_by_type], ignore_index=True)
 
-main = pd.concat([main_all, main_by_type], ignore_index=True)
-
-# historical country monthly by type
+# historical country monthly
 hist_country_by_type = (
     hist.groupby(
         ["iso3", "country", "year", "month_num", "month", "event_type"],
@@ -146,7 +189,8 @@ hist_country_by_type = (
     )
     .agg(
         events=("event_date", "size"),
-        fatalities=("fatalities", "sum")
+        fatalities=("fatalities", "sum"),
+        population_exposure=("population_exposure", "sum"),
     )
 )
 
@@ -157,7 +201,8 @@ hist_country_all = (
     )
     .agg(
         events=("event_date", "size"),
-        fatalities=("fatalities", "sum")
+        fatalities=("fatalities", "sum"),
+        population_exposure=("population_exposure", "sum"),
     )
 )
 
@@ -165,124 +210,137 @@ hist_country_all["event_type"] = "All"
 hist_country_monthly = pd.concat([hist_country_all, hist_country_by_type], ignore_index=True)
 
 # ==================================================
-# 2) MIDDLE EAST WEEKLY AGGREGATED FILE
-#    use this to extend country data to 2026
-#    and build admin1 bubble data for 2024-2026
+# 2) REGIONAL AGGREGATED FILES
+# use these for 2024-2026 admin1 bubbles and 2026 extension
 # ==================================================
-me = read_table(middle_east_file)
+regional_frames = []
 
-print("\nMiddle East original columns:")
-print(me.columns.tolist())
+for file_path in regional_files:
+    print(f"\nReading regional file: {file_path.name}")
+    df = read_table(file_path)
+    print(df.columns.tolist())
 
-rename_map_me = {
-    "WEEK": "event_date",
-    "COUNTRY": "country",
-    "ADMIN1": "admin1",
-    "EVENT_TYPE": "event_type",
-    "EVENTS": "events",
-    "FATALITIES": "fatalities",
-    "POPULATION_EXPOSURE": "population_exposure",
-    "CENTROID_LATITUDE": "centroid_latitude",
-    "CENTROID_LONGITUDE": "centroid_longitude",
-}
+    rename_map_reg = {
+        "WEEK": "event_date",
+        "COUNTRY": "country",
+        "ADMIN1": "admin1",
+        "EVENT_TYPE": "event_type",
+        "EVENTS": "events",
+        "FATALITIES": "fatalities",
+        "POPULATION_EXPOSURE": "population_exposure",
+        "CENTROID_LATITUDE": "centroid_latitude",
+        "CENTROID_LONGITUDE": "centroid_longitude",
+        "ISO3": "iso3",
+    }
 
-me = me.rename(columns=rename_map_me)
+    df = df.rename(columns=rename_map_reg)
 
-needed_me = [
-    "event_date",
-    "country",
-    "admin1",
-    "event_type",
-    "events",
-    "fatalities",
-    "population_exposure",
-    "centroid_latitude",
-    "centroid_longitude",
-]
+    needed_reg = [
+        "event_date",
+        "country",
+        "admin1",
+        "event_type",
+        "events",
+        "fatalities",
+        "population_exposure",
+        "centroid_latitude",
+        "centroid_longitude",
+    ]
 
-missing_me = [c for c in needed_me if c not in me.columns]
-if missing_me:
-    raise ValueError(f"Missing expected Middle East columns: {missing_me}")
+    missing_reg = [c for c in needed_reg if c not in df.columns]
+    if missing_reg:
+        raise ValueError(f"{file_path.name} is missing expected columns: {missing_reg}")
 
-me = me[needed_me].copy()
-me = clean_text_cols(me, ["country", "admin1", "event_type"])
+    df = df[needed_reg].copy()
+    df = clean_text_cols(df, ["country", "admin1", "event_type"])
 
-me["event_date"] = pd.to_datetime(me["event_date"], errors="coerce")
-me = me[me["event_date"].notna()].copy()
+    df["event_date"] = pd.to_datetime(df["event_date"], errors="coerce")
+    df = df[df["event_date"].notna()].copy()
 
-me["year"] = me["event_date"].dt.year
-me["month_num"] = me["event_date"].dt.month
-me["month"] = me["event_date"].dt.strftime("%B")
+    df["year"] = df["event_date"].dt.year
+    df["month_num"] = df["event_date"].dt.month
+    df["month"] = df["event_date"].dt.strftime("%B")
 
-me["events"] = pd.to_numeric(me["events"], errors="coerce").fillna(0)
-me["fatalities"] = pd.to_numeric(me["fatalities"], errors="coerce").fillna(0)
-me["population_exposure"] = pd.to_numeric(me["population_exposure"], errors="coerce").fillna(0)
-me["centroid_latitude"] = pd.to_numeric(me["centroid_latitude"], errors="coerce")
-me["centroid_longitude"] = pd.to_numeric(me["centroid_longitude"], errors="coerce")
+    df["events"] = pd.to_numeric(df["events"], errors="coerce").fillna(0)
+    df["fatalities"] = pd.to_numeric(df["fatalities"], errors="coerce").fillna(0)
+    df["population_exposure"] = pd.to_numeric(df["population_exposure"], errors="coerce").fillna(0)
+    df["centroid_latitude"] = pd.to_numeric(df["centroid_latitude"], errors="coerce")
+    df["centroid_longitude"] = pd.to_numeric(df["centroid_longitude"], errors="coerce")
 
-me = me[
-    me["country"].notna()
-    & me["event_type"].notna()
-].copy()
+    # add ISO numeric from country name
+    df["country"] = df["country"].replace(COUNTRY_FIXES)
+    df["iso3"] = df["country"].apply(get_iso_numeric)
 
-# map country to numeric ISO for world country file
-me["iso3"] = me["country"].map(COUNTRY_TO_ISO_NUMERIC)
+    unresolved = sorted(df.loc[df["iso3"].isna(), "country"].dropna().unique().tolist())
+    if unresolved:
+        print(f"\nUnresolved country names in {file_path.name}:")
+        print(unresolved)
 
-missing_iso = sorted(me.loc[me["iso3"].isna(), "country"].dropna().unique().tolist())
-if missing_iso:
-    raise ValueError(f"Missing ISO numeric mapping for countries: {missing_iso}")
+    df = df[
+        df["country"].notna()
+        & df["event_type"].notna()
+        & df["iso3"].notna()
+    ].copy()
 
-me["iso3"] = me["iso3"].astype(int)
+    df["iso3"] = df["iso3"].astype(int)
 
-# --------------------------------------------------
-# country monthly from 2026 only
-# this extends your current world/country timeline
-# --------------------------------------------------
-me_2026 = me[me["year"] == 2026].copy()
+    # only 2024-2026
+    df = df[df["year"].between(MIN_YEAR, MAX_YEAR)].copy()
 
-me_country_by_type_2026 = (
-    me_2026.groupby(
+    regional_frames.append(df)
+
+if not regional_frames:
+    raise ValueError("No regional files were loaded.")
+
+reg = pd.concat(regional_frames, ignore_index=True)
+reg = reg.drop_duplicates().reset_index(drop=True)
+
+# ==================================================
+# 3) COUNTRY MONTHLY OUTPUT
+# historical 2024-2025 + regional 2026
+# ==================================================
+reg_2026 = reg[reg["year"] == 2026].copy()
+
+reg_country_by_type_2026 = (
+    reg_2026.groupby(
         ["iso3", "country", "year", "month_num", "month", "event_type"],
         as_index=False
     )
     .agg(
         events=("events", "sum"),
-        fatalities=("fatalities", "sum")
+        fatalities=("fatalities", "sum"),
+        population_exposure=("population_exposure", "sum"),
     )
 )
 
-me_country_all_2026 = (
-    me_2026.groupby(
+reg_country_all_2026 = (
+    reg_2026.groupby(
         ["iso3", "country", "year", "month_num", "month"],
         as_index=False
     )
     .agg(
         events=("events", "sum"),
-        fatalities=("fatalities", "sum")
+        fatalities=("fatalities", "sum"),
+        population_exposure=("population_exposure", "sum"),
     )
 )
 
-me_country_all_2026["event_type"] = "All"
+reg_country_all_2026["event_type"] = "All"
+reg_country_monthly_2026 = pd.concat([reg_country_all_2026, reg_country_by_type_2026], ignore_index=True)
 
-me_country_monthly_2026 = pd.concat(
-    [me_country_all_2026, me_country_by_type_2026],
-    ignore_index=True
-)
+country_monthly = pd.concat([hist_country_monthly, reg_country_monthly_2026], ignore_index=True)
 
-# combine historical global file + 2026 Middle East extension
-country_monthly = pd.concat(
-    [hist_country_monthly, me_country_monthly_2026],
-    ignore_index=True
-)
+# keep only 2024-2026
+country_monthly = country_monthly[country_monthly["year"].between(MIN_YEAR, MAX_YEAR)].copy()
 
-# --------------------------------------------------
-# admin1 monthly with centroids for 2024-2026
-# this is for your selected-country zoom + bubble map
-# --------------------------------------------------
-me_2024_2026 = me[me["year"].between(2024, 2026)].copy()
+# ==================================================
+# 4) ADMIN1 MONTHLY WITH CENTROIDS (from regional files)
+# this is for 2024-2026
+# ==================================================
+reg_2024_2026 = reg[reg["year"].between(MIN_YEAR, MAX_YEAR)].copy()
 
 admin1_by_type = (
-    me_2024_2026.groupby(
+    reg_2024_2026.groupby(
         ["iso3", "country", "admin1", "year", "month_num", "month", "event_type"],
         as_index=False
     )
@@ -296,7 +354,7 @@ admin1_by_type = (
 )
 
 admin1_all = (
-    me_2024_2026.groupby(
+    reg_2024_2026.groupby(
         ["iso3", "country", "admin1", "year", "month_num", "month"],
         as_index=False
     )
@@ -310,11 +368,18 @@ admin1_all = (
 )
 
 admin1_all["event_type"] = "All"
-
 admin1_monthly = pd.concat([admin1_all, admin1_by_type], ignore_index=True)
 
 # ==================================================
-# SORT
+# 5) ADMIN DETAILED OUTPUT
+# historical ACLED detailed output only
+# keep only 2024-2025 because regional files are admin1 aggregated, not admin2 event-level
+# ==================================================
+main = hist_main.copy()
+main = main[main["year"].between(MIN_YEAR, MAX_YEAR)].copy()
+
+# ==================================================
+# 6) SORT
 # ==================================================
 main = main.sort_values(
     ["year", "month_num", "country", "admin1", "admin2", "event_type"]
@@ -329,22 +394,22 @@ admin1_monthly = admin1_monthly.sort_values(
 ).reset_index(drop=True)
 
 # ==================================================
-# SAVE
+# 7) SAVE
 # ==================================================
 main.to_csv(output_main, index=False, encoding="utf-8-sig")
 country_monthly.to_csv(output_country, index=False, encoding="utf-8-sig")
-admin1_monthly.to_csv(output_admin1_bubbles, index=False, encoding="utf-8-sig")
+admin1_monthly.to_csv(output_admin1, index=False, encoding="utf-8-sig")
 
 print("\nSaved:")
 print(output_main)
 print(output_country)
-print(output_admin1_bubbles)
+print(output_admin1)
 
-print("\nHistorical detailed sample:")
+print("\nDetailed historical admin sample:")
 print(main.head())
 
-print("\nUpdated country monthly sample:")
+print("\nCountry monthly sample:")
 print(country_monthly.head())
 
-print("\nAdmin1 bubble sample:")
+print("\nAdmin1 monthly sample:")
 print(admin1_monthly.head())
