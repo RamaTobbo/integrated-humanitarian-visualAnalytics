@@ -1395,7 +1395,7 @@ def build_intro_story_html(video_uri, image_uris, story_stats):
         <p class="story-kicker">{escape(copy['slide_7_eyebrow'])}</p>
         <h2 class="story-headline">{escape(copy['slide_7_title'])}</h2>
         <p class="story-body">{escape(copy['slide_7_body'])}</p>
-        <button class="story-cta" id="storyOpenApp" type="button">Enter Dashboard</button>
+        
       </div>
     </section>
   </main>
@@ -2331,6 +2331,28 @@ section.main,
     border: 0 !important;
     box-shadow: none !important;
 }
+div[data-testid="stButton"] > button {
+    background: rgba(255,255,255,0.08) !important;
+    border: 1px solid rgba(245,244,239,0.22) !important;
+    color: #f5f4ef !important;
+    font-family: Inter, "Helvetica Neue", Arial, sans-serif !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.18em !important;
+    text-transform: uppercase !important;
+    padding: 17px 32px !important;
+                        margin-top: -20px;
+    border-radius: 999px !important;
+    min-width: 290px !important;
+    cursor: pointer !important;
+    transition: transform 180ms ease, background 180ms ease, border-color 180ms ease !important;
+    box-shadow: none !important;
+}
+div[data-testid="stButton"] > button:hover {
+    background: rgba(255,255,255,0.12) !important;
+    border-color: rgba(245,244,239,0.34) !important;
+    transform: translateY(-1px) !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -2339,6 +2361,12 @@ section.main,
         height=INTRO_STORY_MOTION["component_height_px"],
         scrolling=True,
     )
+    st.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
+    _btn_col = st.columns([3, 2, 3])[1]
+    with _btn_col:
+        if st.button("Enter Dashboard →", key="enter_dashboard", use_container_width=True):
+            st.session_state["show_intro"] = False
+            st.rerun()
     st.stop()
 
 if False and st.session_state["show_intro"]:
@@ -3568,7 +3596,14 @@ else:
         st.warning("No admin-level data found for this country.")
         st.stop()
 
-    available_source = country_conflict_rows if not country_conflict_rows.empty else country_priority_rows
+    period_frames = []
+    for source_df in (country_conflict_rows, country_priority_rows):
+        if not source_df.empty:
+            period_frames.append(source_df[["year", "month_num", "month"]].copy())
+    available_periods = pd.concat(period_frames, ignore_index=True).drop_duplicates() if period_frames else pd.DataFrame()
+    available_source = available_periods if not available_periods.empty else (
+        country_conflict_rows if not country_conflict_rows.empty else country_priority_rows
+    )
     avail_years = sorted([y for y in available_source["year"].dropna().unique() if MIN_YEAR <= y <= MAX_YEAR])
 
     if not avail_years:
@@ -3589,7 +3624,11 @@ else:
     )
     st.session_state["country_year"] = selected_year
 
-    month_source = available_source[available_source["year"] == selected_year][["month_num","month"]].drop_duplicates().sort_values("month_num")
+    month_source = (
+        available_source[available_source["year"] == selected_year][["month_num", "month"]]
+        .drop_duplicates()
+        .sort_values("month_num")
+    )
     month_list = month_source["month"].tolist()
     if not month_list:
         st.warning("No months available.")

@@ -1,3 +1,4 @@
+
 import os
 os.environ["OGR_GEOJSON_MAX_OBJ_SIZE"] = "0"
 
@@ -1527,7 +1528,7 @@ if st.session_state["view"] == "world":
         base_df = base_df[base_df["country_norm"] == cnorm].copy()
 
     st.sidebar.markdown('<div class="sidebar-section">Period</div>', unsafe_allow_html=True)
-    world_years = sorted([y for y in base_df["year"].dropna().unique() if MIN_YEAR <= y <= MAX_YEAR])
+    world_years = list(range(MIN_YEAR, MAX_YEAR + 1))
     if not world_years:
         st.warning("No years available.")
         st.stop()
@@ -1979,7 +1980,14 @@ else:
         st.warning("No admin-level data found for this country.")
         st.stop()
 
-    available_source = country_conflict_rows if not country_conflict_rows.empty else country_priority_rows
+    period_frames = []
+    for source_df in (country_conflict_rows, country_priority_rows):
+        if not source_df.empty:
+            period_frames.append(source_df[["year", "month_num", "month"]].copy())
+    available_periods = pd.concat(period_frames, ignore_index=True).drop_duplicates() if period_frames else pd.DataFrame()
+    available_source = available_periods if not available_periods.empty else (
+        country_conflict_rows if not country_conflict_rows.empty else country_priority_rows
+    )
     avail_years = sorted([y for y in available_source["year"].dropna().unique() if MIN_YEAR <= y <= MAX_YEAR])
 
     if not avail_years:
@@ -2000,7 +2008,11 @@ else:
     )
     st.session_state["country_year"] = selected_year
 
-    month_source = available_source[available_source["year"] == selected_year][["month_num","month"]].drop_duplicates().sort_values("month_num")
+    month_source = (
+        available_source[available_source["year"] == selected_year][["month_num", "month"]]
+        .drop_duplicates()
+        .sort_values("month_num")
+    )
     month_list = month_source["month"].tolist()
     if not month_list:
         st.warning("No months available.")
