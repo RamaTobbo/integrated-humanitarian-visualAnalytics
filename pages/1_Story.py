@@ -17,6 +17,11 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
+from dashboard_compare_utils import (
+    build_country_comparison_radar,
+    prepare_radar_comparison_data,
+)
+
 # ──────────────────────────────────────────────────
 # PAGE CONFIG & GLOBAL STYLE
 # ──────────────────────────────────────────────────
@@ -257,6 +262,18 @@ div[data-baseweb="select"] > div:hover {
     border-color: var(--accent-soft) !important;
 }
 div[data-baseweb="select"] svg { fill: var(--text-secondary) !important; }
+div[data-baseweb="select"] div[data-baseweb="tag"] {
+    background: linear-gradient(135deg, #0ea5e9 0%, #8b5cf6 100%) !important;
+    border: none !important;
+    border-radius: 999px !important;
+    box-shadow: 0 6px 16px rgba(14, 165, 233, 0.16) !important;
+}
+div[data-baseweb="select"] div[data-baseweb="tag"] span,
+div[data-baseweb="select"] div[data-baseweb="tag"] div,
+div[data-baseweb="select"] div[data-baseweb="tag"] svg {
+    color: #ffffff !important;
+    fill: #ffffff !important;
+}
 
 .stSelectbox label,
 .stSlider label,
@@ -3733,6 +3750,64 @@ if st.session_state["view"] == "world":
                     "country_month":None,
                 })
                 st.rerun()
+
+        comparison_source = country_priority[
+            (country_priority["year"] == selected_year) &
+            (country_priority["month"].str.lower() == selected_month.lower())
+        ].copy()
+        comparison_source["country"] = comparison_source["country"].astype(str).str.strip()
+        world_name_lookup = world.set_index("country_norm")["country_name_geo"].to_dict()
+        comparison_source["country_label"] = comparison_source["country_norm"].map(world_name_lookup).fillna(
+            comparison_source["country"].astype(str).str.replace("-", " ").str.title()
+        )
+        comparison_options = (
+            comparison_source.sort_values(["country_priority_score", "country_label"], ascending=[False, True])["country_label"]
+            .dropna()
+            .drop_duplicates()
+            .tolist()
+        )
+
+        st.markdown(
+            '<div class="section-title"><span class="section-dot"></span>Worldwide Country Comparison</div>',
+            unsafe_allow_html=True,
+        )
+        if len(comparison_options) < 2:
+            st.info("At least two countries with priority data are needed to build the comparison radar for this period.")
+        else:
+            current_compare = [
+                country for country in st.session_state.get("world_compare_countries", [])
+                if country in comparison_options
+            ]
+            if len(current_compare) < 2:
+                current_compare = comparison_options[:min(2, len(comparison_options))]
+            st.session_state["world_compare_countries"] = current_compare[:5]
+
+            selected_compare_countries = st.multiselect(
+                "Select up to 5 countries to compare",
+                comparison_options,
+                key="world_compare_countries",
+                max_selections=5,
+            )
+
+            if len(selected_compare_countries) < 2:
+                st.info("Select at least 2 countries to compare.")
+            else:
+                radar_payload = prepare_radar_comparison_data(
+                    comparison_source,
+                    selected_year,
+                    selected_month,
+                    selected_compare_countries,
+                    None,
+                )
+                if radar_payload["wide_df"].empty:
+                    st.info("No comparison data is available for the selected countries in this period.")
+                else:
+                    radar_fig = build_country_comparison_radar(radar_payload["wide_df"], None)
+                    st.plotly_chart(
+                        radar_fig,
+                        use_container_width=True,
+                        key=f"world_country_comparison_{selected_year}_{selected_month}",
+                    )
 
         st.markdown(
             f'<div class="section-title"><span class="section-dot"></span>Top 10 by {metric_label(metric)}</div>',
