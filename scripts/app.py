@@ -2,6 +2,7 @@ import os
 os.environ["OGR_GEOJSON_MAX_OBJ_SIZE"] = "0"
 
 import json
+import math
 import re
 import unicodedata
 from pathlib import Path
@@ -739,6 +740,19 @@ def build_mapbox_center(gdf, default_lat=20, default_lon=10):
     except Exception:
         return {"lat": default_lat, "lon": default_lon}
 
+def build_mapbox_zoom(gdf, base_zoom, max_zoom=8.0):
+    if gdf is None or gdf.empty or "geometry" not in gdf.columns:
+        return base_zoom
+    try:
+        minx, miny, maxx, maxy = gdf.total_bounds
+        span_x = max(float(maxx - minx), 0.15)
+        span_y = max(float(maxy - miny), 0.15)
+        span = max(span_x, span_y)
+        adaptive_zoom = 7.5 - math.log2(span)
+        return float(max(base_zoom, min(max_zoom, adaptive_zoom)))
+    except Exception:
+        return base_zoom
+
 LIGHT_LAYOUT = dict(
     paper_bgcolor="#ffffff",
     plot_bgcolor="#ffffff",
@@ -1232,7 +1246,7 @@ if st.session_state["view"] == "world":
                 },
                 custom_data=["iso_a3","country_name_geo"],
                 mapbox_style="carto-positron",
-                zoom=3.2,
+                zoom=build_mapbox_zoom(sgeo, base_zoom=3.2, max_zoom=7.2),
                 center=build_mapbox_center(sgeo),
                 opacity=0.90,
                 title=f"{selected_country} — {metric.capitalize()}",
@@ -1407,7 +1421,7 @@ if st.session_state["view"] == "world":
                 },
                 custom_data=["iso_a3","country_name_geo"],
                 mapbox_style="carto-positron",
-                zoom=3.2,
+                zoom=build_mapbox_zoom(sgeo, base_zoom=3.2, max_zoom=7.2),
                 center=build_mapbox_center(sgeo),
                 opacity=0.90,
                 title=f"{selected_country} — {metric_label(metric)}",
@@ -1635,7 +1649,7 @@ else:
             },
             mapbox_style="carto-positron",
             center=build_mapbox_center(merged),
-            zoom=5.0,
+            zoom=build_mapbox_zoom(merged, base_zoom=5.0, max_zoom=8.4),
             opacity=0.88,
             title=f"{selected_country_name} — {metric_label(selected_metric)} by Admin1",
         )
@@ -1654,8 +1668,16 @@ else:
             f'<div class="section-title"><span class="section-dot"></span>Top Admin1 by {metric_label(selected_metric)}</div>',
             unsafe_allow_html=True
         )
-        top_admin = merged.sort_values(selected_metric, ascending=False)[["admin_name", selected_metric]].head(10).reset_index(drop=True)
-        render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_big)
+        top_admin = (
+            merged[merged[selected_metric] > 0]
+            .sort_values(selected_metric, ascending=False)[["admin_name", selected_metric]]
+            .head(10)
+            .reset_index(drop=True)
+        )
+        if top_admin.empty:
+            st.info(f"No admin areas with {metric_label(selected_metric).lower()} above 0 for this period.")
+        else:
+            render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_big)
 
     else:
         selected_metric = st.sidebar.selectbox(
@@ -1786,7 +1808,7 @@ else:
             },
             mapbox_style="carto-positron",
             center=build_mapbox_center(merged),
-            zoom=5.0,
+            zoom=build_mapbox_zoom(merged, base_zoom=5.0, max_zoom=8.4),
             opacity=0.88,
             title=f"{selected_country_name} — {metric_label(selected_metric)} by Admin1",
         )
@@ -1805,5 +1827,13 @@ else:
             f'<div class="section-title"><span class="section-dot"></span>Top Admin1 by {metric_label(selected_metric)}</div>',
             unsafe_allow_html=True
         )
-        top_admin = merged.sort_values(selected_metric, ascending=False)[["admin_name", selected_metric]].head(10).reset_index(drop=True)
-        render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_fn)
+        top_admin = (
+            merged[merged[selected_metric] > 0]
+            .sort_values(selected_metric, ascending=False)[["admin_name", selected_metric]]
+            .head(10)
+            .reset_index(drop=True)
+        )
+        if top_admin.empty:
+            st.info(f"No admin areas with {metric_label(selected_metric).lower()} above 0 for this period.")
+        else:
+            render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_fn)
