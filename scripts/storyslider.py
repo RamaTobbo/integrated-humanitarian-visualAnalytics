@@ -1,10 +1,13 @@
 import os
 os.environ["OGR_GEOJSON_MAX_OBJ_SIZE"] = "0"
 
+import base64
 import json
 import math
+import mimetypes
 import re
 import unicodedata
+from html import escape
 from pathlib import Path
 
 import geopandas as gpd
@@ -12,6 +15,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 
 # ──────────────────────────────────────────────────
 # PAGE CONFIG & GLOBAL STYLE
@@ -338,13 +342,13 @@ hr { border-color: var(--border) !important; }
     flex-direction: row !important;
     gap: 6px !important;
     padding: 4px !important;
-    border: 1px solid var(--border-bright) !important;
-    border-radius: 12px !important;
-    background: var(--bg-card) !important;
-    box-shadow: var(--shadow-sm) !important;
+    border: none !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
 }
 [data-testid="stRadio"] label {
-    border: 1px solid transparent !important;
+    border: none !important;
     padding: 9px 16px !important;
     cursor: pointer;
     font-weight: 500 !important;
@@ -356,16 +360,16 @@ hr { border-color: var(--border) !important; }
     transition: all 0.15s ease;
 }
 [data-testid="stRadio"] label:hover {
-    border-color: var(--accent-soft) !important;
-    background: rgba(44, 74, 110, 0.06) !important;
-    color: var(--accent-ink) !important;
+    border: none !important;
+    background: var(--bg-hover) !important;
+    color: var(--text-primary) !important;
 }
 [data-testid="stRadio"] label:has(input:checked) {
-    border-color: var(--accent) !important;
-    color: #ffffff !important;
-    background: var(--accent) !important;
+    border: none !important;
+    color: var(--text-primary) !important;
+    background: var(--bg-soft) !important;
     font-weight: 600 !important;
-    box-shadow: var(--shadow-sm) !important;
+    box-shadow: none !important;
 }
 
 [data-testid="stTabs"] [data-baseweb="tab-list"] {
@@ -428,6 +432,68 @@ displacement_dest_path   = BASE_DIR / "data" / "cleaned" / "global"     / "displ
 displacement_origin_path = BASE_DIR / "data" / "cleaned" / "global"     / "displacement_admin1_origin_monthly_2024_2026.csv"
 country_boundaries_dir   = BASE_DIR / "data" / "cleaned" / "boundaries" / "countries"
 lbn_admin2_fallback_path = BASE_DIR / "data" / "raw"     / "boundaries" / "geoBoundaries-LBN-ADM2.geojson"
+
+# ──────────────────────────────────────────────────
+# INTRO STORY CONFIG
+# Update these paths, colors, timings, and messages to swap assets later.
+# ──────────────────────────────────────────────────
+INTRO_VIDEO_PATH = Path(
+    r"C:\Users\rama\Downloads\From KlickPin CF Pin di Nana Sujana su Videogram _ Sfondi Sfondi per telefono Parola di dio - Pin-20336635812903131.mp4"
+)
+
+INTRO_IMAGE_PATHS = {
+    "conflict": Path(r"C:\Users\rama\Downloads\download.jpg"),
+    "limits": Path(r"C:\Users\rama\Downloads\download (1).jpg"),
+    "displacement": Path(r"C:\Users\rama\Downloads\download (3).jpg"),
+    "priority": Path(r"C:\Users\rama\Downloads\download (2).jpg"),
+}
+
+INTRO_STORY_THEME = {
+    "navy_900": "#071627",
+    "navy_800": "#10243d",
+    "navy_700": "#1a3658",
+    "navy_500": "#365d87",
+    "text_main": "#f5f4ef",
+    "text_soft": "rgba(245, 244, 239, 0.74)",
+    "text_dim": "rgba(245, 244, 239, 0.46)",
+    "danger": "#c96a69",
+    "priority": "#8fae92",
+}
+
+INTRO_STORY_MOTION = {
+    "component_height_px": 920,    # Intro viewport height in Streamlit
+    "hero_transition_ms": 1400,    # Delay before auto-scroll after the video ends
+    "reveal_ms": 950,              # Fade/slide reveal duration
+    "parallax_shift_px": 28,       # Image motion intensity
+}
+
+INTRO_STORY_COPY = {
+    # Replace these messages with your final scrollytelling text later.
+    "hero_eyebrow": "Conflict Intelligence Story",
+    "hero_title": "Conflict is never only a battle.",
+    "hero_body": "It expands into displacement, interrupted services, and harder decisions about where help should go first.",
+    "slide_1_eyebrow": "01 / Global Conflict",
+    "slide_1_title": "Conflict first appears as scale.",
+    "slide_1_body": "Events and fatalities reveal where violence is concentrated, but the numbers are only the beginning of the story.",
+    "slide_2_eyebrow": "02 / Limits",
+    "slide_2_title": "Conflict alone is not enough.",
+    "slide_2_body": "A country can record violence and still hide a deeper humanitarian reality. Risk grows when conflict meets exposure, displacement, and weaker access.",
+    "slide_3_eyebrow": "03 / Displacement",
+    "slide_3_title": "People carry the cost forward.",
+    "slide_3_body": "Displacement turns conflict into lived disruption, reshaping shelter, education, health access, and the geography of need.",
+    "slide_4_eyebrow": "04 / Priority",
+    "slide_4_title": "Priority matters when resources do not stretch equally.",
+    "slide_4_body": "Priority is the bridge between what happened and where response becomes most urgent.",
+    "slide_5_eyebrow": "05 / Method",
+    "slide_5_title": "Priority is measured through overlap.",
+    "slide_5_body": "Conflict intensity, displacement pressure, exposed populations, and service access combine to identify where conditions tighten fastest.",
+    "slide_6_eyebrow": "06 / Priority View",
+    "slide_6_title": "The priority lens sharpens the picture.",
+    "slide_6_body": "This final view is less about where conflict happened and more about where humanitarian pressure is now most concentrated.",
+    "slide_7_eyebrow": "07 / Explore",
+    "slide_7_title": "Enter the dashboard.",
+    "slide_7_body": "Move from the guided story into the interactive dashboard to explore countries, months, displacement flows, and priority rankings in detail.",
+}
 
 # ──────────────────────────────────────────────────
 # CONSTANTS
@@ -786,6 +852,663 @@ def render_top10_grid(df, name_col, val_col, fmt_fn=None):
         + ''.join(cards) + '</div>',
         unsafe_allow_html=True,
     )
+
+@st.cache_data(show_spinner=False)
+def file_to_data_uri(path_str):
+    path = Path(path_str)
+    if not path.exists():
+        return None
+    mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
+
+def build_intro_story_html(video_uri, image_uris, story_stats):
+    theme = INTRO_STORY_THEME
+    motion = INTRO_STORY_MOTION
+    copy = INTRO_STORY_COPY
+
+    def bg_style(key):
+        uri = image_uris.get(key)
+        if uri:
+            return f"background-image:url('{uri}');"
+        return ""
+
+    def render_stat_cards(items, class_name):
+        return "".join(
+            f"""
+            <article class="{class_name}">
+              <div class="{class_name}__label">{escape(str(item['label']))}</div>
+              <div class="{class_name}__value">{escape(str(item['value']))}</div>
+              <p class="{class_name}__copy">{escape(str(item['copy']))}</p>
+            </article>
+            """
+            for item in items
+        )
+
+    conflict_cards = [
+        {"label": "Global Events", "value": story_stats["total_events"], "copy": "Recorded across the active conflict layer."},
+        {"label": "Fatalities", "value": story_stats["total_fatalities"], "copy": "The most immediate visible cost."},
+        {"label": "Latest Hotspot", "value": story_stats["top_conflict_country"], "copy": f"{story_stats['top_conflict_events']} events in {story_stats['latest_label']}."},
+        {"label": "Countries", "value": story_stats["country_count"], "copy": "Covered in the country-level conflict view."},
+    ]
+
+    formula_cards = [
+        {"label": "Conflict", "value": "Events + fatalities", "copy": "Intensity is the first signal.", "tone": "danger"},
+        {"label": "Displacement", "value": "Movement pressure", "copy": "Need travels with people.", "tone": "danger"},
+        {"label": "Exposure", "value": "People at risk", "copy": "Scale sharpens the urgency.", "tone": "priority"},
+        {"label": "Access", "value": "Services within reach", "copy": "Health access changes the response picture.", "tone": "priority"},
+    ]
+
+    formula_markup = "".join(
+        f"""
+        <article class="story-formula-card tone-{escape(card['tone'])}">
+          <div class="story-formula-card__label">{escape(card['label'])}</div>
+          <div class="story-formula-card__value">{escape(card['value'])}</div>
+          <p class="story-formula-card__copy">{escape(card['copy'])}</p>
+        </article>
+        """
+        for card in formula_cards
+    )
+
+    priority_cards = [
+        {"label": "Priority Country", "value": story_stats["priority_country"], "copy": f"Highest latest country score in {story_stats['latest_label']}."},
+        {"label": "Priority Score", "value": story_stats["priority_score"], "copy": "Higher values indicate tighter overlap of risk."},
+        {"label": "Population Exposure", "value": story_stats["population_exposure"], "copy": "Exposure expands the story beyond incidents alone."},
+        {"label": "Health Signal", "value": story_stats["health_signal"], "copy": f"{story_stats['health_area']} currently leads the Lebanon health-access signal."},
+    ]
+
+    html = f"""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Conflict Story Intro</title>
+  <style>
+    :root {{
+      --story-navy-900: {theme['navy_900']};
+      --story-navy-800: {theme['navy_800']};
+      --story-navy-700: {theme['navy_700']};
+      --story-navy-500: {theme['navy_500']};
+      --story-text: {theme['text_main']};
+      --story-text-soft: {theme['text_soft']};
+      --story-text-dim: {theme['text_dim']};
+      --story-danger: {theme['danger']};
+      --story-priority: {theme['priority']};
+      --story-reveal-ms: {motion['reveal_ms']}ms;
+      --story-parallax-y: {motion['parallax_shift_px']}px;
+    }}
+
+    * {{ box-sizing: border-box; }}
+    html, body {{
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: var(--story-navy-900);
+      color: var(--story-text);
+      font-family: Inter, "Helvetica Neue", Arial, sans-serif;
+      overflow: hidden;
+    }}
+
+    .story-shell {{
+      height: 100vh;
+      overflow-y: auto;
+      scroll-snap-type: y mandatory;
+      scroll-behavior: smooth;
+      background: var(--story-navy-900);
+    }}
+    .story-shell.is-locked {{
+      overflow: hidden;
+    }}
+
+    .story-step {{
+      position: relative;
+      min-height: 100vh;
+      scroll-snap-align: start;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background:
+        radial-gradient(circle at 70% 15%, rgba(54, 93, 135, 0.18), transparent 20%),
+        linear-gradient(180deg, var(--story-navy-900) 0%, var(--story-navy-800) 100%);
+    }}
+    .story-step--light {{
+      background:
+        radial-gradient(circle at 18% 16%, rgba(54, 93, 135, 0.08), transparent 18%),
+        linear-gradient(180deg, #f6f7fa 0%, #eef2f7 100%);
+      color: #0f1b2c;
+    }}
+
+    .story-media,
+    .story-video {{
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }}
+    .story-media {{
+      background-position: center center;
+      background-size: cover;
+      opacity: 0.48;
+      transform: scale(1.08) translateY(var(--story-parallax-y));
+      filter: saturate(0.9) contrast(1.03) brightness(0.78);
+      transition:
+        transform 2200ms cubic-bezier(.2,.75,.2,1),
+        opacity 1200ms ease,
+        filter 1200ms ease;
+    }}
+    .story-step.is-visible .story-media {{
+      opacity: 0.72;
+      transform: scale(1.02) translateY(0);
+      filter: saturate(1) contrast(1.06) brightness(0.9);
+    }}
+
+    .story-video {{
+      opacity: 1;
+      filter: saturate(0.85) brightness(0.62);
+    }}
+
+    .story-overlay {{
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(180deg, rgba(7, 22, 39, 0.36) 0%, rgba(7, 22, 39, 0.74) 100%),
+        radial-gradient(circle at center, rgba(7, 22, 39, 0.10) 0%, rgba(7, 22, 39, 0.68) 100%);
+    }}
+    .story-step--light .story-overlay {{
+      background:
+        linear-gradient(180deg, rgba(246, 247, 250, 0.50) 0%, rgba(238, 242, 247, 0.92) 100%);
+    }}
+
+    .story-content {{
+      position: relative;
+      z-index: 2;
+      width: min(1180px, calc(100vw - 64px));
+      padding: 68px 24px;
+    }}
+    .story-content > * {{
+      opacity: 0;
+      transform: translateY(28px);
+      filter: blur(12px);
+      transition:
+        opacity var(--story-reveal-ms) ease,
+        transform var(--story-reveal-ms) ease,
+        filter var(--story-reveal-ms) ease;
+    }}
+    .story-step.is-visible .story-content > * {{
+      opacity: 1;
+      transform: translateY(0);
+      filter: blur(0);
+    }}
+    .story-step.is-visible .story-content > *:nth-child(2) {{ transition-delay: 90ms; }}
+    .story-step.is-visible .story-content > *:nth-child(3) {{ transition-delay: 180ms; }}
+    .story-step.is-visible .story-content > *:nth-child(4) {{ transition-delay: 260ms; }}
+
+    .story-kicker {{
+      margin: 0 0 18px;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      color: var(--story-text-dim);
+    }}
+    .story-step--light .story-kicker {{
+      color: rgba(16, 36, 61, 0.56);
+    }}
+
+    .story-headline {{
+      margin: 0;
+      max-width: 12ch;
+      font-size: clamp(48px, 7vw, 72px);
+      font-weight: 500;
+      line-height: 0.98;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--story-text);
+    }}
+    .story-step--light .story-headline {{
+      color: #10243d;
+    }}
+
+    .story-body {{
+      margin: 24px 0 0;
+      max-width: 32rem;
+      font-size: clamp(16px, 1.9vw, 20px);
+      font-weight: 400;
+      line-height: 1.8;
+      color: var(--story-text-soft);
+    }}
+    .story-step--light .story-body {{
+      color: rgba(16, 36, 61, 0.72);
+    }}
+
+    .story-accent-danger {{ color: var(--story-danger); }}
+    .story-accent-priority {{ color: var(--story-priority); }}
+
+    .story-grid {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 34px;
+    }}
+    .story-stat-card,
+    .story-priority-card,
+    .story-formula-card {{
+      min-height: 220px;
+      padding: 24px 22px;
+      border-radius: 26px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.05);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 18px 38px rgba(0,0,0,0.16);
+    }}
+    .story-step--light .story-stat-card,
+    .story-step--light .story-priority-card,
+    .story-step--light .story-formula-card {{
+      border-color: rgba(16, 36, 61, 0.08);
+      background: rgba(255,255,255,0.72);
+      box-shadow: 0 16px 34px rgba(16, 36, 61, 0.08);
+    }}
+    .story-stat-card__label,
+    .story-priority-card__label,
+    .story-formula-card__label {{
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--story-text-dim);
+    }}
+    .story-step--light .story-stat-card__label,
+    .story-step--light .story-priority-card__label,
+    .story-step--light .story-formula-card__label {{
+      color: rgba(16, 36, 61, 0.48);
+    }}
+    .story-stat-card__value,
+    .story-priority-card__value,
+    .story-formula-card__value {{
+      margin-top: 18px;
+      font-size: clamp(28px, 3.8vw, 44px);
+      font-weight: 500;
+      line-height: 1.04;
+      letter-spacing: 0.02em;
+    }}
+    .story-formula-card__value {{
+      font-size: clamp(22px, 2.8vw, 30px);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }}
+    .story-stat-card__copy,
+    .story-priority-card__copy,
+    .story-formula-card__copy {{
+      margin: 18px 0 0;
+      font-size: 15px;
+      line-height: 1.75;
+      color: var(--story-text-soft);
+    }}
+    .story-step--light .story-stat-card__copy,
+    .story-step--light .story-priority-card__copy,
+    .story-step--light .story-formula-card__copy {{
+      color: rgba(16, 36, 61, 0.72);
+    }}
+
+    .tone-danger {{
+      box-shadow: inset 0 0 0 1px rgba(201, 106, 105, 0.24), 0 18px 38px rgba(0,0,0,0.16);
+    }}
+    .tone-priority {{
+      box-shadow: inset 0 0 0 1px rgba(143, 174, 146, 0.24), 0 18px 38px rgba(0,0,0,0.16);
+    }}
+
+    .story-priority-visual {{
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 26px;
+      align-items: stretch;
+      margin-top: 32px;
+    }}
+    .story-priority-scene {{
+      position: relative;
+      min-height: 430px;
+      border-radius: 34px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.08);
+      background:
+        radial-gradient(circle at 25% 25%, rgba(201, 106, 105, 0.14), transparent 20%),
+        radial-gradient(circle at 72% 28%, rgba(143, 174, 146, 0.12), transparent 24%),
+        linear-gradient(180deg, rgba(16,36,61,0.76) 0%, rgba(7,22,39,0.86) 100%);
+    }}
+    .story-priority-scene::before {{
+      content: "";
+      position: absolute;
+      inset: 0;
+      {bg_style("priority")}
+      background-position: center;
+      background-size: cover;
+      opacity: 0.34;
+      transform: scale(1.05);
+    }}
+    .story-priority-scene::after {{
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(180deg, rgba(7,22,39,0.10) 0%, rgba(7,22,39,0.82) 100%);
+    }}
+    .story-priority-scene-copy {{
+      position: absolute;
+      left: 28px;
+      right: 28px;
+      bottom: 28px;
+      z-index: 2;
+    }}
+    .story-priority-scene-copy h3 {{
+      margin: 0;
+      font-size: clamp(24px, 3vw, 34px);
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      line-height: 1.05;
+      text-transform: uppercase;
+    }}
+    .story-priority-scene-copy p {{
+      margin: 14px 0 0;
+      max-width: 28rem;
+      font-size: 16px;
+      line-height: 1.8;
+      color: var(--story-text-soft);
+    }}
+
+    .story-cta {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 290px;
+      margin-top: 28px;
+      padding: 17px 32px;
+      border-radius: 999px;
+      border: 1px solid rgba(245, 244, 239, 0.12);
+      background: rgba(255,255,255,0.08);
+      color: var(--story-text);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      appearance: none;
+      cursor: pointer;
+      transition: transform 180ms ease, background 180ms ease, border-color 180ms ease;
+    }}
+    .story-cta:hover {{
+      transform: translateY(-1px);
+      background: rgba(255,255,255,0.12);
+      border-color: rgba(245, 244, 239, 0.22);
+    }}
+
+    .story-skip {{
+      position: absolute;
+      right: 28px;
+      bottom: 28px;
+      z-index: 3;
+      border: 1px solid rgba(245, 244, 239, 0.14);
+      background: rgba(7,22,39,0.35);
+      color: var(--story-text);
+      padding: 12px 16px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }}
+
+    @media (max-width: 1024px) {{
+      .story-grid,
+      .story-priority-visual {{
+        grid-template-columns: 1fr;
+      }}
+      .story-headline {{
+        max-width: 100%;
+      }}
+      .story-content {{
+        width: min(100vw, calc(100vw - 28px));
+        padding: 42px 16px;
+      }}
+    }}
+
+    @media (max-width: 680px) {{
+      .story-headline {{
+        font-size: clamp(42px, 12vw, 56px);
+      }}
+      .story-body,
+      .story-priority-scene-copy p {{
+        font-size: 16px;
+      }}
+      .story-stat-card,
+      .story-priority-card,
+      .story-formula-card {{
+        min-height: auto;
+      }}
+    }}
+  </style>
+</head>
+<body>
+  <main class="story-shell is-locked" id="storyShell">
+    <section class="story-step story-step--hero is-visible" id="storyHero">
+      <video class="story-video" id="storyVideo" autoplay muted playsinline preload="auto">
+        <source src="{video_uri or ''}" type="video/mp4">
+      </video>
+      <div class="story-overlay"></div>
+      <div class="story-content">
+        <p class="story-kicker">{escape(copy['hero_eyebrow'])}</p>
+        <h1 class="story-headline">{escape(copy['hero_title'])}</h1>
+        <p class="story-body">{escape(copy['hero_body'])}</p>
+      </div>
+      <button class="story-skip" id="storySkip">Skip intro</button>
+    </section>
+
+    <section class="story-step" data-step>
+      <div class="story-media" style="{bg_style('conflict')}"></div>
+      <div class="story-overlay"></div>
+      <div class="story-content">
+        <p class="story-kicker">{escape(copy['slide_1_eyebrow'])}</p>
+        <h2 class="story-headline">{escape(copy['slide_1_title'])}</h2>
+        <p class="story-body">{escape(copy['slide_1_body'])}</p>
+        <div class="story-grid">
+          {render_stat_cards(conflict_cards, "story-stat-card")}
+        </div>
+      </div>
+    </section>
+
+    <section class="story-step story-step--light" data-step>
+      <div class="story-media" style="{bg_style('limits')}"></div>
+      <div class="story-overlay"></div>
+      <div class="story-content">
+        <p class="story-kicker">{escape(copy['slide_2_eyebrow'])}</p>
+        <h2 class="story-headline">{escape(copy['slide_2_title'])}</h2>
+        <p class="story-body">{escape(copy['slide_2_body'])}</p>
+      </div>
+    </section>
+
+    <section class="story-step" data-step>
+      <div class="story-media" style="{bg_style('displacement')}"></div>
+      <div class="story-overlay"></div>
+      <div class="story-content">
+        <p class="story-kicker">{escape(copy['slide_3_eyebrow'])}</p>
+        <h2 class="story-headline">{escape(copy['slide_3_title'])}</h2>
+        <p class="story-body">{escape(copy['slide_3_body'])}</p>
+        <div class="story-grid">
+          {render_stat_cards([
+              {"label": "Displaced", "value": story_stats["total_displaced"], "copy": "Lives moved by conflict pressure."},
+              {"label": "Exposure", "value": story_stats["population_exposure"], "copy": "People living inside the pressure field."},
+              {"label": "Priority Country", "value": story_stats["priority_country"], "copy": "Latest monthly concentration of need."},
+              {"label": "Story Lens", "value": "Human impact", "copy": "This is where conflict becomes lived disruption."},
+          ], "story-stat-card")}
+        </div>
+      </div>
+    </section>
+
+    <section class="story-step story-step--light" data-step>
+      <div class="story-media" style="{bg_style('priority')}"></div>
+      <div class="story-overlay"></div>
+      <div class="story-content">
+        <p class="story-kicker">{escape(copy['slide_4_eyebrow'])}</p>
+        <h2 class="story-headline">{escape(copy['slide_4_title'])}</h2>
+        <p class="story-body">{escape(copy['slide_4_body'])}</p>
+      </div>
+    </section>
+
+    <section class="story-step" data-step>
+      <div class="story-overlay"></div>
+      <div class="story-content">
+        <p class="story-kicker">{escape(copy['slide_5_eyebrow'])}</p>
+        <h2 class="story-headline">{escape(copy['slide_5_title'])}</h2>
+        <p class="story-body">{escape(copy['slide_5_body'])}</p>
+        <div class="story-grid">
+          {formula_markup}
+        </div>
+      </div>
+    </section>
+
+    <section class="story-step" data-step>
+      <div class="story-overlay"></div>
+      <div class="story-content">
+        <p class="story-kicker">{escape(copy['slide_6_eyebrow'])}</p>
+        <h2 class="story-headline">{escape(copy['slide_6_title'])}</h2>
+        <p class="story-body">{escape(copy['slide_6_body'])}</p>
+        <div class="story-priority-visual">
+          <div class="story-priority-scene">
+            <div class="story-priority-scene-copy">
+              <h3><span class="story-accent-priority">{escape(story_stats['priority_country'])}</span> carries the sharpest latest priority signal.</h3>
+              <p>Conflict data becomes more actionable when it is reframed through exposure, displacement, and access pressure.</p>
+            </div>
+          </div>
+          <div class="story-grid">
+            {render_stat_cards(priority_cards, "story-priority-card")}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="story-step" data-step>
+      <div class="story-media" style="{bg_style('priority')}"></div>
+      <div class="story-overlay"></div>
+      <div class="story-content">
+        <p class="story-kicker">{escape(copy['slide_7_eyebrow'])}</p>
+        <h2 class="story-headline">{escape(copy['slide_7_title'])}</h2>
+        <p class="story-body">{escape(copy['slide_7_body'])}</p>
+        <button class="story-cta" id="storyOpenApp" type="button">Enter Dashboard</button>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const shell = document.getElementById("storyShell");
+    const hero = document.getElementById("storyHero");
+    const video = document.getElementById("storyVideo");
+    const skipButton = document.getElementById("storySkip");
+    const firstStep = document.querySelector('[data-step]');
+    const unlockDelay = {motion['hero_transition_ms']};
+
+    function unlockAndAdvance() {{
+      shell.classList.remove("is-locked");
+      setTimeout(() => {{
+        if (firstStep) {{
+          firstStep.scrollIntoView({{ behavior: "smooth", block: "start" }});
+        }}
+      }}, unlockDelay);
+    }}
+
+    function buildAppUrl() {{
+      const candidates = [];
+
+      if (document.referrer) {{
+        candidates.push(document.referrer);
+      }}
+
+      try {{
+        if (window.parent?.location?.href) {{
+          candidates.push(window.parent.location.href);
+        }}
+      }} catch (error) {{}}
+
+      try {{
+        if (window.top?.location?.href) {{
+          candidates.push(window.top.location.href);
+        }}
+      }} catch (error) {{}}
+
+      try {{
+        if (window.location?.href) {{
+          candidates.push(window.location.href);
+        }}
+      }} catch (error) {{}}
+
+      for (const href of candidates) {{
+        try {{
+          const url = new URL(href, window.location.origin);
+          if (url.protocol === "about:") {{
+            continue;
+          }}
+          url.searchParams.set("open_app", "1");
+          return url.toString();
+        }} catch (error) {{}}
+      }}
+
+      return "/?open_app=1";
+    }}
+
+    function openApp(event) {{
+      if (event) {{
+        event.preventDefault();
+      }}
+
+      const targetUrl = buildAppUrl();
+
+      try {{
+        window.open(targetUrl, "_top");
+        return;
+      }} catch (error) {{}}
+
+      try {{
+        window.top.location.assign(targetUrl);
+        return;
+      }} catch (error) {{}}
+
+      try {{
+        window.parent.location.assign(targetUrl);
+        return;
+      }} catch (error) {{}}
+
+      window.location.assign(targetUrl);
+    }}
+
+    if (video) {{
+      video.play().catch(() => {{
+        shell.classList.remove("is-locked");
+      }});
+      video.addEventListener("ended", unlockAndAdvance, {{ once: true }});
+    }} else {{
+      shell.classList.remove("is-locked");
+    }}
+
+    skipButton?.addEventListener("click", unlockAndAdvance);
+
+    const enterAppButton = document.getElementById("storyOpenApp");
+    if (enterAppButton) {{
+      enterAppButton.addEventListener("click", openApp);
+    }}
+
+    const observer = new IntersectionObserver((entries) => {{
+      entries.forEach((entry) => {{
+        entry.target.classList.toggle("is-visible", entry.isIntersecting);
+      }});
+    }}, {{ threshold: 0.35 }});
+
+    document.querySelectorAll(".story-step").forEach((step) => observer.observe(step));
+  </script>
+</body>
+</html>
+"""
+    return html
 
 def render_bubble_story(selected_country_name, boundary_gdf):
     cnorm = canonical_country_norm(selected_country_name)
@@ -1468,6 +2191,7 @@ defaults = [
     ("country_month",None),
     ("country_event_type","All"),
     ("country_metric","events"),
+    ("show_intro", True),
 ]
 for key, default in defaults:
     if key not in st.session_state:
@@ -1477,6 +2201,871 @@ if "world_year" not in st.session_state or "world_month" not in st.session_state
     y, m = default_latest_period_with_year_bounds(country_conflict)
     st.session_state["world_year"] = y
     st.session_state["world_month"] = m
+
+_intro_query_open = st.query_params.get("open_dashboard", None)
+if _intro_query_open in ("1", ["1"]):
+    st.session_state["show_intro"] = False
+    try:
+        del st.query_params["open_dashboard"]
+    except Exception:
+        pass
+
+_intro_query_app = st.query_params.get("open_app", None)
+if _intro_query_app in ("1", ["1"]):
+    st.session_state["show_intro"] = False
+    try:
+        del st.query_params["open_app"]
+    except Exception:
+        pass
+    for page_path in ("scripts/app.py", "app.py", "scripts/pages/dashboard.py", "pages/dashboard.py"):
+        try:
+            st.switch_page(page_path)
+        except Exception:
+            continue
+
+# ──────────────────────────────────────────────────
+# INTRO SCREEN
+# ──────────────────────────────────────────────────
+if st.session_state["show_intro"]:
+    story_stats = {
+        "latest_label": f"{default_latest_period_with_year_bounds(country_conflict)[1]} {default_latest_period_with_year_bounds(country_conflict)[0]}",
+        "top_conflict_country": "the world",
+        "top_conflict_events": "0",
+        "top_conflict_fatalities": "0",
+        "priority_country": "the world",
+        "priority_score": "0.000",
+        "population_exposure": fmt_big(0),
+        "health_area": "Lebanon",
+        "health_signal": "0.000",
+        "total_events": fmt_big(int(country_conflict["events"].sum())),
+        "total_fatalities": fmt_big(int(country_conflict["fatalities"].sum())),
+        "total_displaced": fmt_big(float(displacement_dest["displaced_in"].sum()) if not displacement_dest.empty else 0.0),
+        "country_count": str(int(country_conflict["country"].nunique())),
+    }
+
+    intro_year, intro_month = default_latest_period_with_year_bounds(country_conflict)
+    story_stats["latest_label"] = f"{intro_month} {intro_year}"
+
+    intro_conflict_latest = country_conflict[
+        (country_conflict["year"] == intro_year) &
+        (country_conflict["month"].str.lower() == intro_month.lower())
+    ].copy()
+    if not intro_conflict_latest.empty:
+        intro_conflict_latest = (
+            intro_conflict_latest.groupby("country", as_index=False)
+            .agg({"events": "sum", "fatalities": "sum"})
+            .sort_values(["events", "fatalities"], ascending=[False, False])
+        )
+        story_stats["top_conflict_country"] = str(intro_conflict_latest.iloc[0]["country"])
+        story_stats["top_conflict_events"] = fmt_big(intro_conflict_latest.iloc[0]["events"])
+        story_stats["top_conflict_fatalities"] = fmt_big(intro_conflict_latest.iloc[0]["fatalities"])
+
+    intro_priority_latest = country_priority[
+        (country_priority["year"] == intro_year) &
+        (country_priority["month"].str.lower() == intro_month.lower())
+    ].copy()
+    if not intro_priority_latest.empty:
+        intro_priority_scores = (
+            intro_priority_latest.groupby("country", as_index=False)
+            .agg({"country_priority_score": "mean", "population_exposure": "sum"})
+            .sort_values(["country_priority_score", "population_exposure"], ascending=[False, False])
+        )
+        if not intro_priority_scores.empty:
+            story_stats["priority_country"] = str(intro_priority_scores.iloc[0]["country"])
+            story_stats["priority_score"] = f"{float(intro_priority_scores.iloc[0]['country_priority_score']):.3f}"
+        story_stats["population_exposure"] = fmt_big(float(intro_priority_latest["population_exposure"].sum()))
+
+    intro_health_path = BASE_DIR / "data" / "cleaned" / "lebanon" / "lebanon_priority_admin1_enhanced.csv"
+    if intro_health_path.exists():
+        intro_health_df = pd.read_csv(intro_health_path)
+        for col in ["year", "month_num", "hospital_access_risk", "access_risk"]:
+            if col in intro_health_df.columns:
+                intro_health_df[col] = pd.to_numeric(intro_health_df[col], errors="coerce")
+        intro_health_df = intro_health_df[
+            intro_health_df["year"].notna() & intro_health_df["month_num"].notna()
+        ].copy()
+        if not intro_health_df.empty:
+            intro_health_df["year"] = intro_health_df["year"].astype(int)
+            intro_health_df["month_num"] = intro_health_df["month_num"].astype(int)
+            intro_health_df = intro_health_df.sort_values(["year", "month_num"])
+            intro_health_latest = intro_health_df.iloc[-1]
+            intro_health_slice = intro_health_df[
+                (intro_health_df["year"] == int(intro_health_latest["year"])) &
+                (intro_health_df["month_num"] == int(intro_health_latest["month_num"]))
+            ].copy()
+            intro_health_col = "hospital_access_risk" if "hospital_access_risk" in intro_health_slice.columns else "access_risk"
+            if intro_health_col in intro_health_slice.columns and not intro_health_slice.empty:
+                intro_health_slice = intro_health_slice.sort_values(intro_health_col, ascending=False)
+                story_stats["health_area"] = str(intro_health_slice.iloc[0]["admin1_norm"]).replace("-", " ").title()
+                story_stats["health_signal"] = f"{float(intro_health_slice.iloc[0][intro_health_col]):.3f}"
+
+    # Update the asset constants at the top of the file to swap video/images later.
+    intro_video_uri = file_to_data_uri(str(INTRO_VIDEO_PATH)) if INTRO_VIDEO_PATH else None
+    intro_image_uris = {
+        key: file_to_data_uri(str(path))
+        for key, path in INTRO_IMAGE_PATHS.items()
+    }
+
+    st.markdown("""
+<style>
+[data-testid="stSidebar"]      { display: none !important; }
+[data-testid="stToolbar"]      { display: none !important; }
+[data-testid="stDecoration"]   { display: none !important; }
+[data-testid="stStatusWidget"] { display: none !important; }
+header[data-testid="stHeader"] { display: none !important; }
+footer                         { display: none !important; }
+#MainMenu                      { display: none !important; }
+html, body,
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+section.main,
+.main .block-container {
+    background: #071627 !important;
+    padding: 0 !important;
+    max-width: 100% !important;
+}
+.block-container {
+    padding: 0 !important;
+}
+[data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stIFrame"] {
+    border: 0 !important;
+    box-shadow: none !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+    components.html(
+        build_intro_story_html(intro_video_uri, intro_image_uris, story_stats),
+        height=INTRO_STORY_MOTION["component_height_px"],
+        scrolling=True,
+    )
+    st.stop()
+
+if False and st.session_state["show_intro"]:
+    _story_total_ev = int(country_conflict["events"].sum())
+    _story_total_fat = int(country_conflict["fatalities"].sum())
+    _story_total_disp = float(displacement_dest["displaced_in"].sum()) if not displacement_dest.empty else 0.0
+    _story_country_count = int(country_conflict["country"].nunique())
+    _story_year, _story_month = default_latest_period_with_year_bounds(country_conflict)
+    _story_label = f"{_story_month} {_story_year}"
+
+    _story_conflict_latest = country_conflict[
+        (country_conflict["year"] == _story_year) &
+        (country_conflict["month"].str.lower() == _story_month.lower())
+    ].copy()
+    _story_conflict_latest = (
+        _story_conflict_latest.groupby("country", as_index=False)
+        .agg({"events": "sum", "fatalities": "sum"})
+        .sort_values(["events", "fatalities"], ascending=[False, False])
+    )
+    if _story_conflict_latest.empty:
+        _story_top_conflict_country = "the world"
+        _story_top_conflict_events = 0
+        _story_top_conflict_fatalities = 0
+    else:
+        _story_top_conflict_country = str(_story_conflict_latest.iloc[0]["country"])
+        _story_top_conflict_events = int(_story_conflict_latest.iloc[0]["events"])
+        _story_top_conflict_fatalities = int(_story_conflict_latest.iloc[0]["fatalities"])
+
+    _story_priority_latest = country_priority[
+        (country_priority["year"] == _story_year) &
+        (country_priority["month"].str.lower() == _story_month.lower())
+    ].copy()
+    _story_priority_country = "the world"
+    _story_priority_score = 0.0
+    _story_population_exposure = 0.0
+    if not _story_priority_latest.empty:
+        _story_priority_scores = (
+            _story_priority_latest.groupby("country", as_index=False)
+            .agg({"country_priority_score": "mean", "population_exposure": "sum"})
+            .sort_values(["country_priority_score", "population_exposure"], ascending=[False, False])
+        )
+        if not _story_priority_scores.empty:
+            _story_priority_country = str(_story_priority_scores.iloc[0]["country"])
+            _story_priority_score = float(_story_priority_scores.iloc[0]["country_priority_score"])
+        _story_population_exposure = float(_story_priority_latest["population_exposure"].sum())
+
+    _story_lbn_path = BASE_DIR / "data" / "cleaned" / "lebanon" / "lebanon_priority_admin1_enhanced.csv"
+    _story_health_area = "Lebanon"
+    _story_health_risk = 0.0
+    if _story_lbn_path.exists():
+        _story_lbn = pd.read_csv(_story_lbn_path)
+        for _col in ["year", "month_num", "hospital_access_risk", "access_risk"]:
+            if _col in _story_lbn.columns:
+                _story_lbn[_col] = pd.to_numeric(_story_lbn[_col], errors="coerce")
+        _story_lbn = _story_lbn[
+            _story_lbn["year"].notna() &
+            _story_lbn["month_num"].notna()
+        ].copy()
+        if not _story_lbn.empty:
+            _story_lbn["year"] = _story_lbn["year"].astype(int)
+            _story_lbn["month_num"] = _story_lbn["month_num"].astype(int)
+            _story_lbn = _story_lbn.sort_values(["year", "month_num"])
+            _story_lbn_latest = _story_lbn.iloc[-1]
+            _story_lbn_slice = _story_lbn[
+                (_story_lbn["year"] == int(_story_lbn_latest["year"])) &
+                (_story_lbn["month_num"] == int(_story_lbn_latest["month_num"]))
+            ].copy()
+            _story_health_col = "hospital_access_risk" if "hospital_access_risk" in _story_lbn_slice.columns else "access_risk"
+            if _story_health_col in _story_lbn_slice.columns and not _story_lbn_slice.empty:
+                _story_lbn_slice = _story_lbn_slice.sort_values(_story_health_col, ascending=False)
+                _story_health_area = str(_story_lbn_slice.iloc[0]["admin1_norm"]).replace("-", " ").title()
+                _story_health_risk = float(_story_lbn_slice.iloc[0][_story_health_col])
+
+    st.markdown("""
+<style>
+[data-testid="stSidebar"]      { display: none !important; }
+[data-testid="stToolbar"]      { display: none !important; }
+[data-testid="stDecoration"]   { display: none !important; }
+[data-testid="stStatusWidget"] { display: none !important; }
+header[data-testid="stHeader"] { display: none !important; }
+footer                         { display: none !important; }
+#MainMenu                      { display: none !important; }
+html, body,
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+section.main,
+.main .block-container {
+    background: #ffffff !important;
+    padding: 0 !important;
+    max-width: 100% !important;
+}
+.block-container {
+    padding: 0 !important;
+}
+.story-page {
+    width: 100%;
+    overflow: hidden;
+    background: #ffffff;
+}
+.story-masthead {
+    background: #ffffff;
+    text-align: center;
+    padding: 28px 20px 22px 20px;
+    border-bottom: 1px solid rgba(27,34,48,0.08);
+}
+.story-masthead-title {
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #111827;
+}
+.story-masthead-meta {
+    margin-top: 8px;
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #7b8190;
+}
+.story-panel {
+    position: relative;
+    min-height: 88vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 26px;
+}
+.story-panel-light {
+    background:
+        radial-gradient(circle at 15% 20%, rgba(44, 74, 110, 0.08), transparent 24%),
+        radial-gradient(circle at 85% 30%, rgba(90, 122, 160, 0.08), transparent 28%),
+        #ffffff;
+    color: #171c24;
+}
+.story-panel-dark {
+    background:
+        radial-gradient(circle at 64% 42%, rgba(122, 155, 196, 0.26), transparent 18%),
+        radial-gradient(circle at 32% 70%, rgba(44, 74, 110, 0.34), transparent 22%),
+        linear-gradient(180deg, #122a45 0%, #163556 55%, #1a3b5f 100%);
+    color: #ffffff;
+}
+.story-panel-inner {
+    width: min(1120px, 100%);
+}
+.story-panel-narrow {
+    width: min(900px, 100%);
+    margin: 0 auto;
+}
+.story-kicker {
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.74);
+    margin-bottom: 18px;
+}
+.story-panel-light .story-kicker {
+    color: #2c4a6e;
+}
+.story-title {
+    margin: 0 0 20px 0;
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: clamp(48px, 6vw, 72px);
+    font-weight: 500;
+    line-height: 1.02;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.story-panel-light .story-title {
+    color: #171c24;
+}
+.story-copy {
+    max-width: 760px;
+    margin: 0;
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 18px;
+    font-weight: 400;
+    line-height: 1.8;
+    letter-spacing: 0.01em;
+    color: rgba(255,255,255,0.72);
+}
+.story-panel-light .story-copy {
+    color: #4f5666;
+}
+.story-bigline {
+    margin: 0 0 18px 0;
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: clamp(34px, 4.6vw, 56px);
+    font-weight: 500;
+    line-height: 1.08;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.story-panel-light .story-bigline {
+    color: #111827;
+}
+.story-metric-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 18px;
+    margin-top: 34px;
+}
+.story-metric-card {
+    background: rgba(255,255,255,0.7);
+    border: 1px solid rgba(23,28,36,0.08);
+    border-radius: 22px;
+    padding: 22px 20px;
+    box-shadow: 0 10px 28px rgba(26, 33, 48, 0.05);
+}
+.story-metric-label {
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #7b8190;
+    margin-bottom: 12px;
+}
+.story-metric-value {
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: clamp(28px, 3vw, 40px);
+    font-weight: 500;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    color: #111827;
+}
+.story-metric-note {
+    margin-top: 8px;
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 13px;
+    line-height: 1.7;
+    color: #61697a;
+}
+.story-quote-box {
+    max-width: 900px;
+    padding: 46px 48px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.03);
+    backdrop-filter: blur(8px);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22);
+}
+.story-quote {
+    margin: 0;
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: clamp(28px, 3vw, 40px);
+    font-weight: 300;
+    line-height: 1.45;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.96);
+}
+.story-quote-source {
+    margin-top: 18px;
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.48);
+}
+.story-split {
+    display: grid;
+    grid-template-columns: 1.05fr 0.95fr;
+    gap: 34px;
+    align-items: center;
+}
+.story-paint {
+    min-height: 340px;
+    border-radius: 34px;
+    background:
+        radial-gradient(circle at 36% 44%, rgba(44, 74, 110, 0.88), transparent 26%),
+        radial-gradient(circle at 58% 30%, rgba(90, 122, 160, 0.72), transparent 16%),
+        radial-gradient(circle at 52% 56%, rgba(26, 46, 72, 0.78), transparent 14%),
+        linear-gradient(135deg, rgba(248, 251, 255, 0.98), rgba(240, 245, 251, 0.92));
+    box-shadow: inset 0 0 0 1px rgba(23,28,36,0.05), 0 18px 40px rgba(26, 33, 48, 0.06);
+}
+.story-narrative-card {
+    background: rgba(255,255,255,0.72);
+    border: 1px solid rgba(23,28,36,0.08);
+    border-radius: 24px;
+    padding: 30px 30px 28px 30px;
+    box-shadow: 0 14px 34px rgba(26, 33, 48, 0.05);
+}
+.story-narrative-card h3 {
+    margin: 0 0 12px 0;
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: clamp(28px, 3vw, 40px);
+    font-weight: 500;
+    line-height: 1.08;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #111827;
+}
+.story-narrative-card p {
+    margin: 0;
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 17px;
+    line-height: 1.8;
+    color: #4f5666;
+}
+.story-lens-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 18px;
+    margin-top: 34px;
+}
+.story-lens {
+    min-height: 240px;
+    padding: 24px 22px;
+    border-radius: 24px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 16px 38px rgba(0, 0, 0, 0.2);
+}
+.story-lens-number {
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.42);
+    margin-bottom: 14px;
+}
+.story-lens h4 {
+    margin: 0 0 12px 0;
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 26px;
+    font-weight: 500;
+    line-height: 1.08;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: #ffffff;
+}
+.story-lens p {
+    margin: 0;
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.8;
+    color: rgba(255,255,255,0.68);
+}
+.story-lens strong {
+    color: #f4f7fb;
+}
+.story-final-note {
+    margin: 28px auto 0 auto;
+    max-width: 760px;
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 17px;
+    line-height: 1.8;
+    color: rgba(255,255,255,0.74);
+}
+.story-final-cta {
+    display: flex;
+    justify-content: center;
+    margin-top: 28px;
+}
+.story-final-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 290px;
+    padding: 16px 34px;
+    border-radius: 999px;
+    background: #2c4a6e;
+    border: 1px solid #2c4a6e;
+    color: #ffffff !important;
+    text-decoration: none !important;
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    box-shadow: 0 14px 28px rgba(26, 46, 72, 0.28);
+    transition: all 0.18s ease;
+}
+.story-final-button:hover {
+    background: #1a2e48;
+    border-color: #1a2e48;
+    transform: translateY(-1px);
+}
+@media (max-width: 900px) {
+    .story-panel {
+        min-height: auto;
+        padding: 44px 20px;
+    }
+    .story-metric-grid,
+    .story-lens-grid,
+    .story-split {
+        grid-template-columns: 1fr;
+    }
+    .story-quote-box,
+    .story-narrative-card {
+        padding: 24px 22px;
+    }
+}
+</style>
+""", unsafe_allow_html=True)
+
+    st.markdown(f"""
+<div class="story-page">
+  <section class="story-masthead">
+    <div class="story-masthead-title">Conflict, Priority, Education &amp; Health</div>
+    <div class="story-masthead-meta">Story opening inspired by a scrollytelling structure &middot; Updated April 18, 2026</div>
+  </section>
+
+  <section class="story-panel story-panel-dark">
+    <div class="story-panel-inner story-panel-narrow">
+      <div class="story-kicker">Global Humanitarian Story</div>
+      <h1 class="story-title">Conflict does not stop at the frontline.<br>It travels into <em style="color:#8fa7c9;">priority</em>, classrooms, and care.</h1>
+      <p class="story-copy">
+        This opening page reframes the dashboard as a narrative: violence first appears as events and fatalities,
+        then grows into displacement, rising priority, pressure on education, and harder access to health services.
+        The data below follows that chain from the global picture to the local choices responders have to make.
+      </p>
+    </div>
+  </section>
+
+  <section class="story-panel story-panel-light">
+    <div class="story-panel-inner">
+      <p class="story-bigline">Thousands of incidents continue to reshape humanitarian need.</p>
+      <p class="story-copy">
+        In <strong style="color:#111827;">{_story_label}</strong>, the heaviest concentration of recorded conflict events in the dashboard was
+        <strong style="color:#111827;">{_story_top_conflict_country}</strong>, with <strong style="color:#111827;">{fmt_big(_story_top_conflict_events)}</strong> events and
+        <strong style="color:#111827;">{fmt_big(_story_top_conflict_fatalities)}</strong> fatalities. But violence is only the first signal.
+        Priority grows where conflict overlaps with displacement, exposed populations, and weaker access to essential services.
+      </p>
+      <div class="story-metric-grid">
+        <div class="story-metric-card">
+          <div class="story-metric-label">Conflict Events</div>
+          <div class="story-metric-value">{fmt_big(_story_total_ev)}</div>
+          <div class="story-metric-note">Recorded across {_story_country_count} countries in the current global layer.</div>
+        </div>
+        <div class="story-metric-card">
+          <div class="story-metric-label">Fatalities</div>
+          <div class="story-metric-value">{fmt_big(_story_total_fat)}</div>
+          <div class="story-metric-note">The most visible and immediate human cost of conflict.</div>
+        </div>
+        <div class="story-metric-card">
+          <div class="story-metric-label">Displaced People</div>
+          <div class="story-metric-value">{fmt_big(_story_total_disp)}</div>
+          <div class="story-metric-note">Movement that often disrupts shelter, schooling, and treatment.</div>
+        </div>
+        <div class="story-metric-card">
+          <div class="story-metric-label">Population Exposure</div>
+          <div class="story-metric-value">{fmt_big(_story_population_exposure)}</div>
+          <div class="story-metric-note">Exposure is a bridge between conflict intensity and service pressure.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="story-panel story-panel-dark">
+    <div class="story-panel-inner">
+      <div class="story-quote-box">
+        <p class="story-quote">
+          "Every spike in conflict can ripple outward into displacement, interrupted learning,
+          delayed treatment, and new pockets of humanitarian urgency. A useful story has to connect all of those layers, not just count incidents."
+        </p>
+        <div class="story-quote-source">Project framing</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="story-panel story-panel-light">
+    <div class="story-panel-inner">
+      <div class="story-split">
+        <div class="story-paint"></div>
+        <div class="story-narrative-card">
+          <div class="story-kicker">Why This First Page Matters</div>
+          <h3>A story before the filters</h3>
+          <p>
+            The reference page you shared works because it opens with feeling, then adds evidence, then invites exploration.
+            This version follows the same rhythm for your project: first the scale of conflict, then the logic of priority,
+            then the pressure on education and health, and only after that the full interactive dashboard.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="story-panel story-panel-dark">
+    <div class="story-panel-inner">
+      <div class="story-kicker">Four Lenses</div>
+      <h2 class="story-title" style="font-size:clamp(34px,4vw,58px);">Telling the story through conflict, priority, education, and health.</h2>
+      <div class="story-lens-grid">
+        <div class="story-lens">
+          <div class="story-lens-number">01 / Conflict</div>
+          <h4>Where violence concentrates</h4>
+          <p><strong>{_story_top_conflict_country}</strong> leads the latest conflict month in the global layer, reminding us that the story begins with where violence is recorded most intensely.</p>
+        </div>
+        <div class="story-lens">
+          <div class="story-lens-number">02 / Priority</div>
+          <h4>Where response becomes urgent</h4>
+          <p><strong>{_story_priority_country}</strong> currently carries the highest country priority signal in the monthly layer with a score of <strong>{_story_priority_score:.3f}</strong>.</p>
+        </div>
+        <div class="story-lens">
+          <div class="story-lens-number">03 / Education</div>
+          <h4>Where daily life is interrupted</h4>
+          <p>When exposed populations rise, schooling is usually one of the first routines to fracture. Here, <strong>{fmt_big(_story_population_exposure)}</strong> exposed people frame the likely pressure on learning continuity in the latest month.</p>
+        </div>
+        <div class="story-lens">
+          <div class="story-lens-number">04 / Health</div>
+          <h4>Where access gets harder</h4>
+          <p>In the Lebanon service-access layer, <strong>{_story_health_area}</strong> shows the highest latest health-risk signal at <strong>{_story_health_risk:.3f}</strong>, showing how priority is shaped by care access, not only by conflict counts.</p>
+        </div>
+      </div>
+      <p class="story-final-note">
+        The guided story sets the frame first. The dashboard comes next, where you can move through countries, months,
+        admin1 areas, displacement patterns, and priority rankings in detail.
+      </p>
+      <div class="story-final-cta">
+        <a class="story-final-button" href="?open_dashboard=1">Open the Dashboard</a>
+      </div>
+    </div>
+  </section>
+</div>
+""", unsafe_allow_html=True)
+
+    st.stop()
+
+    _total_ev   = int(country_conflict["events"].sum())
+    _total_fat  = int(country_conflict["fatalities"].sum())
+    _total_disp = float(displacement_dest["displaced_in"].sum()) if not displacement_dest.empty else 0.0
+    _n_ctry     = int(country_conflict["country"].nunique())
+
+    st.markdown("""
+<style>
+[data-testid="stSidebar"]            { display: none !important; }
+[data-testid="stToolbar"]            { display: none !important; }
+[data-testid="stDecoration"]         { display: none !important; }
+[data-testid="stStatusWidget"]       { display: none !important; }
+header[data-testid="stHeader"]       { display: none !important; }
+footer                               { display: none !important; }
+#MainMenu                            { display: none !important; }
+html, body,
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+section.main,
+.main .block-container              {
+    background: #000 !important;
+    padding: 0 !important;
+    max-width: 100% !important;
+}
+.block-container { padding: 0 !important; }
+
+.intro-wrap {
+    position: relative;
+    min-height: 100vh;
+    width: 100%;
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    overflow: hidden;
+}
+.intro-grid-bg {
+    position: absolute;
+    inset: 0;
+    background-image:
+        linear-gradient(rgba(44,74,110,0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(44,74,110,0.07) 1px, transparent 1px);
+    background-size: 48px 48px;
+    z-index: 0;
+}
+.intro-glow {
+    position: absolute;
+    width: 700px; height: 700px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(44,74,110,0.18) 0%, transparent 70%);
+    top: -180px; left: -180px;
+    z-index: 0;
+}
+.intro-glow2 {
+    position: absolute;
+    width: 500px; height: 500px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(184,112,58,0.10) 0%, transparent 70%);
+    bottom: -120px; right: -120px;
+    z-index: 0;
+}
+.intro-content {
+    position: relative;
+    z-index: 1;
+    max-width: 820px;
+    padding: 80px 60px 60px 60px;
+}
+.intro-eyebrow {
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: rgba(44,74,110,0.9);
+    margin-bottom: 28px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.intro-eyebrow::before {
+    content: '';
+    display: inline-block;
+    width: 28px; height: 1px;
+    background: rgba(44,74,110,0.7);
+}
+.intro-headline {
+    font-family: 'Playfair Display', serif;
+    font-size: clamp(38px, 5.5vw, 68px);
+    font-weight: 700;
+    color: #ffffff;
+    line-height: 1.08;
+    letter-spacing: -0.025em;
+    margin: 0 0 32px 0;
+}
+.intro-headline em {
+    color: #7a9bc4;
+    font-style: italic;
+}
+.intro-lead {
+    font-family: 'Inter', sans-serif;
+    font-size: 16px;
+    font-weight: 400;
+    color: rgba(255,255,255,0.55);
+    line-height: 1.8;
+    max-width: 600px;
+    margin: 0 0 52px 0;
+}
+.intro-stats {
+    display: flex;
+    gap: 0;
+    margin-bottom: 56px;
+    border-left: 1px solid rgba(255,255,255,0.08);
+}
+.intro-stat {
+    padding: 0 36px 0 36px;
+    border-right: 1px solid rgba(255,255,255,0.08);
+}
+.intro-stat-val {
+    font-family: 'Playfair Display', serif;
+    font-size: 32px;
+    font-weight: 700;
+    color: #ffffff;
+    line-height: 1;
+    margin-bottom: 8px;
+}
+.intro-stat-lbl {
+    font-family: 'Inter', sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.35);
+}
+.intro-divider {
+    width: 56px; height: 1px;
+    background: rgba(44,74,110,0.6);
+    margin-bottom: 40px;
+}
+
+/* Style the Streamlit button as the dark CTA */
+div[data-testid="stButton"] > button {
+    background: transparent !important;
+    border: 1px solid rgba(255,255,255,0.28) !important;
+    color: #ffffff !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.12em !important;
+    text-transform: uppercase !important;
+    padding: 16px 40px !important;
+    border-radius: 3px !important;
+    cursor: pointer !important;
+    transition: all 0.3s ease !important;
+}
+div[data-testid="stButton"] > button:hover {
+    background: rgba(44,74,110,0.3) !important;
+    border-color: rgba(44,74,110,0.9) !important;
+    transform: translateY(-2px) !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+    st.markdown(f"""
+<div class="intro-wrap">
+  <div class="intro-grid-bg"></div>
+  <div class="intro-glow"></div>
+  <div class="intro-glow2"></div>
+  <div class="intro-content">
+    <div class="intro-eyebrow">Conflict & Priority Intelligence &nbsp;·&nbsp; 2024–2026</div>
+    <h1 class="intro-headline">
+      Millions of people are <em>displaced</em><br>
+      by conflict every year.
+    </h1>
+    <p class="intro-lead">
+      This dashboard maps the human cost of armed conflict — tracking displacement flows,
+      fatality counts, and humanitarian priority scores across admin1 regions worldwide,
+      from January 2024 through 2026.
+    </p>
+    <div class="intro-stats">
+      <div class="intro-stat">
+        <div class="intro-stat-val">{fmt_big(_total_ev)}</div>
+        <div class="intro-stat-lbl">Conflict Events</div>
+      </div>
+      <div class="intro-stat">
+        <div class="intro-stat-val">{fmt_big(_total_fat)}</div>
+        <div class="intro-stat-lbl">Fatalities</div>
+      </div>
+      <div class="intro-stat">
+        <div class="intro-stat-val">{fmt_big(_total_disp)}</div>
+        <div class="intro-stat-lbl">People Displaced</div>
+      </div>
+      <div class="intro-stat">
+        <div class="intro-stat-val">{_n_ctry}</div>
+        <div class="intro-stat-lbl">Countries</div>
+      </div>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+    if st.button("Explore the Data  →", key="intro_enter"):
+        st.session_state["show_intro"] = False
+        st.rerun()
+
+    st.stop()
 
 # ──────────────────────────────────────────────────
 # SIDEBAR BRAND
