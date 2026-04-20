@@ -3330,6 +3330,7 @@ defaults = [
     ("country_event_type","All"),
     ("country_metric","events"),
     ("country_admin1_drilldown", None),
+    ("country_map_level","admin1"),
     ("show_intro", True),
 ]
 for key, default in defaults:
@@ -4274,6 +4275,8 @@ if st.session_state["view"] == "world":
             "world_country": "All",
             "selected_iso3": None,
             "selected_country_name": None,
+            "country_admin1_drilldown": None,
+            "country_map_level": "admin1",
         })
         st.rerun()
 
@@ -4461,6 +4464,8 @@ if st.session_state["view"] == "world":
                     "view":"country",
                     "country_year":None,
                     "country_month":None,
+                    "country_admin1_drilldown": None,
+                    "country_map_level": "admin1",
                 })
                 st.rerun()
         else:
@@ -4509,6 +4514,8 @@ if st.session_state["view"] == "world":
                     "view":"country",
                     "country_year":None,
                     "country_month":None,
+                    "country_admin1_drilldown": None,
+                    "country_map_level": "admin1",
                 })
                 st.rerun()
 
@@ -4653,6 +4660,8 @@ if st.session_state["view"] == "world":
                     "view":"country",
                     "country_year":None,
                     "country_month":None,
+                    "country_admin1_drilldown": None,
+                    "country_map_level": "admin1",
                 })
                 st.rerun()
         else:
@@ -4705,6 +4714,8 @@ if st.session_state["view"] == "world":
                     "view":"country",
                     "country_year":None,
                     "country_month":None,
+                    "country_admin1_drilldown": None,
+                    "country_map_level": "admin1",
                 })
                 st.rerun()
 
@@ -4788,21 +4799,36 @@ else:
             "world_country": "All",
             "selected_iso3": None,
             "selected_country_name": None,
+            "country_admin1_drilldown": None,
+            "country_map_level": "admin1",
         })
         st.rerun()
 
     if selected_country_norm != "lebanon":
         st.session_state["country_admin1_drilldown"] = None
+        st.session_state["country_map_level"] = "admin1"
 
     st.sidebar.markdown('<div class="sidebar-section">Navigation</div>', unsafe_allow_html=True)
-    if st.sidebar.button("← Back to World Map"):
-        st.session_state.update({
-            "view": "world",
-            "world_country": "All",
-            "selected_iso3": None,
-            "selected_country_name": None,
-        })
-        st.rerun()
+    _in_lbn_district_view = (
+        selected_country_norm == "lebanon"
+        and bool(st.session_state.get("country_admin1_drilldown"))
+    )
+    if _in_lbn_district_view:
+        if st.sidebar.button("← Back to Lebanon Map"):
+            st.session_state["country_admin1_drilldown"] = None
+            st.session_state["country_map_level"] = "admin1"
+            st.rerun()
+    else:
+        if st.sidebar.button("← Back to World Map"):
+            st.session_state.update({
+                "view": "world",
+                "world_country": "All",
+                "selected_iso3": None,
+                "selected_country_name": None,
+                "country_admin1_drilldown": None,
+                "country_map_level": "admin1",
+            })
+            st.rerun()
 
     boundary_gdf, boundary_name_col = load_country_admin1_boundary(selected_iso3)
 
@@ -5033,7 +5059,7 @@ else:
             center=build_mapbox_center(merged),
             zoom=build_mapbox_zoom(merged, base_zoom=5.0, max_zoom=8.4),
             opacity=0.88,
-            title=f"{selected_country_name} — {metric_label(selected_metric)} by Admin1",
+            title=f"{selected_country_name} — {metric_label(selected_metric)} by {'Governorate' if selected_country_norm == 'lebanon' else 'Admin1'}",
         )
         fig.update_layout(
             **LIGHT_LAYOUT,
@@ -5045,48 +5071,144 @@ else:
             )
         )
         if selected_country_norm == "lebanon":
-            event = st.plotly_chart(
-                fig,
-                use_container_width=True,
-                on_select="rerun",
-                selection_mode=("points",),
-                key="country_conflict_map",
-            )
-            clicked_admin1 = extract_selected_map_location(event)
-            if clicked_admin1 and clicked_admin1 != st.session_state.get("country_admin1_drilldown"):
-                st.session_state["country_admin1_drilldown"] = clicked_admin1
-                st.rerun()
-            st.caption("Lebanon only: click an admin1 area on the map to open its admin2 districts.")
+            _lbn_drilldown = st.session_state.get("country_admin1_drilldown")
+            st.session_state["country_map_level"] = "admin2" if _lbn_drilldown else "admin1"
+            if _lbn_drilldown:
+                _admin2_boundary = load_lebanon_admin2_boundary()
+                _admin2_boundary = _admin2_boundary[_admin2_boundary["admin1_norm"] == _lbn_drilldown].copy()
+                _admin1_display = (
+                    str(_admin2_boundary["admin1_name"].astype(str).str.strip().iloc[0])
+                    if not _admin2_boundary.empty
+                    else _lbn_drilldown.replace("-", " ").title()
+                )
+                st.markdown(
+                    f'<div style="font-family:Inter,sans-serif;font-size:13px;color:#5a6577;'
+                    f'margin-bottom:10px;padding:8px 14px;background:#eef1f6;border-radius:8px;">'
+                    f'Viewing districts inside <strong style="color:#1b2230;">{_admin1_display}</strong></div>',
+                    unsafe_allow_html=True,
+                )
+                _detail_rows = load_lebanon_admin2_conflict()
+                _detail_rows = _detail_rows[
+                    (_detail_rows["admin1_norm"] == _lbn_drilldown) &
+                    (_detail_rows["year"] == int(selected_year)) &
+                    (_detail_rows["month"].str.lower() == str(selected_month).lower())
+                ].copy()
+                _detail_rows = filter_event_type(_detail_rows, selected_event_type or "All")
+                _detail_metric = selected_metric if selected_metric in {"events", "fatalities", "population_exposure"} else "events"
+                _detail_agg = (
+                    _detail_rows.groupby("admin2_norm", as_index=False)
+                    .agg({
+                        "events": "sum",
+                        "fatalities": "sum",
+                        "population_exposure": "sum",
+                    })
+                    if not _detail_rows.empty
+                    else pd.DataFrame(columns=["admin2_norm", "events", "fatalities", "population_exposure"])
+                )
+                _admin2_merged = _admin2_boundary.merge(_detail_agg, on="admin2_norm", how="left")
+                for _col in ["events", "fatalities", "population_exposure"]:
+                    _admin2_merged[_col] = pd.to_numeric(_admin2_merged.get(_col, 0), errors="coerce").fillna(0)
+                if _detail_rows.empty:
+                    st.info(
+                        f"Lebanon district conflict metrics are not available for {selected_month} {selected_year}. "
+                        f"Showing the districts inside {_admin1_display}."
+                    )
+                _detail_scale = SCALE_BLUE if _detail_metric == "events" else SCALE_WARM if _detail_metric == "fatalities" else SCALE_GOLD
+                _fig2 = px.choropleth_mapbox(
+                    _admin2_merged,
+                    geojson=json.loads(_admin2_merged.to_json()),
+                    locations="admin2_norm",
+                    featureidkey="properties.admin2_norm",
+                    color=_detail_metric,
+                    color_continuous_scale=_detail_scale,
+                    hover_name="admin2_label",
+                    hover_data={
+                        "events": True,
+                        "fatalities": True,
+                        "population_exposure": True,
+                        "admin2_norm": False,
+                    },
+                    mapbox_style="carto-positron",
+                    center=build_mapbox_center(_admin2_merged),
+                    zoom=build_mapbox_zoom(_admin2_merged, base_zoom=6.6, max_zoom=9.8),
+                    opacity=0.9,
+                    title=f"{_admin1_display} — {metric_label(_detail_metric)} by District",
+                )
+                _fig2.update_layout(
+                    **LIGHT_LAYOUT,
+                    height=800,
+                    coloraxis_colorbar=dict(
+                        title=metric_label(_detail_metric),
+                        tickfont=dict(family="Inter", size=10, color="#5a6577"),
+                        title_font=dict(family="Inter", size=11, color="#1b2230"),
+                    ),
+                )
+                st.plotly_chart(_fig2, use_container_width=True, key="country_conflict_map")
+                st.markdown(
+                    f'<div class="section-title"><span class="section-dot"></span>Top {_admin1_display} Districts by {metric_label(_detail_metric)}</div>',
+                    unsafe_allow_html=True,
+                )
+                _top_d = (
+                    _admin2_merged[_admin2_merged[_detail_metric] > 0]
+                    .sort_values(_detail_metric, ascending=False)[["admin2_label", _detail_metric]]
+                    .head(10)
+                    .reset_index(drop=True)
+                )
+                if _top_d.empty:
+                    st.info(f"No districts with {metric_label(_detail_metric).lower()} above 0 for this period.")
+                else:
+                    render_top10_grid(_top_d, "admin2_label", _detail_metric, fmt_fn=fmt_big)
+            else:
+                event = st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    on_select="rerun",
+                    selection_mode=("points",),
+                    key="country_conflict_map",
+                )
+                clicked_admin1 = extract_selected_map_location(event)
+                if clicked_admin1 and clicked_admin1 != _lbn_drilldown:
+                    st.session_state["country_admin1_drilldown"] = clicked_admin1
+                    st.session_state["country_map_level"] = "admin2"
+                    st.rerun()
+                st.caption("Click a governorate to zoom into its admin2 districts.")
+                st.markdown(
+                    f'<div class="section-title"><span class="section-dot"></span>Top Governorates by {metric_label(selected_metric)}</div>',
+                    unsafe_allow_html=True
+                )
+                top_admin = (
+                    merged[merged[selected_metric] > 0]
+                    .sort_values(selected_metric, ascending=False)[["admin_name", selected_metric]]
+                    .head(10)
+                    .reset_index(drop=True)
+                )
+                if top_admin.empty:
+                    if not has_admin_conflict_data and selected_country_conflict_country_row is not None:
+                        st.info("Admin1 conflict data is unavailable for this period, so no admin-level ranking can be shown yet.")
+                    else:
+                        st.info(f"No admin areas with {metric_label(selected_metric).lower()} above 0 for this period.")
+                else:
+                    render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_big)
         else:
             st.plotly_chart(fig, use_container_width=True, key="country_conflict_map")
 
-        st.markdown(
-            f'<div class="section-title"><span class="section-dot"></span>Top Admin1 by {metric_label(selected_metric)}</div>',
-            unsafe_allow_html=True
-        )
-        top_admin = (
-            merged[merged[selected_metric] > 0]
-            .sort_values(selected_metric, ascending=False)[["admin_name", selected_metric]]
-            .head(10)
-            .reset_index(drop=True)
-        )
-        if top_admin.empty:
-            if not has_admin_conflict_data and selected_country_conflict_country_row is not None:
-                st.info("Admin1 conflict data is unavailable for this period, so no admin-level ranking can be shown yet.")
-            else:
-                st.info(f"No admin areas with {metric_label(selected_metric).lower()} above 0 for this period.")
-        else:
-            render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_big)
-
-        if selected_country_norm == "lebanon":
-            render_lebanon_admin2_drilldown(
-                st.session_state.get("country_admin1_drilldown"),
-                selected_year,
-                selected_month,
-                country_mode="Conflict",
-                selected_metric=selected_metric,
-                selected_event_type=selected_event_type,
+            st.markdown(
+                f'<div class="section-title"><span class="section-dot"></span>Top Admin1 by {metric_label(selected_metric)}</div>',
+                unsafe_allow_html=True
             )
+            top_admin = (
+                merged[merged[selected_metric] > 0]
+                .sort_values(selected_metric, ascending=False)[["admin_name", selected_metric]]
+                .head(10)
+                .reset_index(drop=True)
+            )
+            if top_admin.empty:
+                if not has_admin_conflict_data and selected_country_conflict_country_row is not None:
+                    st.info("Admin1 conflict data is unavailable for this period, so no admin-level ranking can be shown yet.")
+                else:
+                    st.info(f"No admin areas with {metric_label(selected_metric).lower()} above 0 for this period.")
+            else:
+                render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_big)
 
     else:
         selected_metric = st.sidebar.selectbox(
@@ -5221,7 +5343,7 @@ else:
             center=build_mapbox_center(merged),
             zoom=build_mapbox_zoom(merged, base_zoom=5.0, max_zoom=8.4),
             opacity=0.88,
-            title=f"{selected_country_name} — {metric_label(selected_metric)} by Admin1",
+            title=f"{selected_country_name} — {metric_label(selected_metric)} by {'Governorate' if selected_country_norm == 'lebanon' else 'Admin1'}",
         )
         fig.update_layout(
             **LIGHT_LAYOUT,
@@ -5233,44 +5355,146 @@ else:
             )
         )
         if selected_country_norm == "lebanon":
-            event = st.plotly_chart(
-                fig,
-                use_container_width=True,
-                on_select="rerun",
-                selection_mode=("points",),
-                key="country_priority_map",
-            )
-            clicked_admin1 = extract_selected_map_location(event)
-            if clicked_admin1 and clicked_admin1 != st.session_state.get("country_admin1_drilldown"):
-                st.session_state["country_admin1_drilldown"] = clicked_admin1
-                st.rerun()
-            st.caption("Lebanon only: click an admin1 area on the map to open its admin2 districts.")
+            _lbn_drilldown = st.session_state.get("country_admin1_drilldown")
+            st.session_state["country_map_level"] = "admin2" if _lbn_drilldown else "admin1"
+            if _lbn_drilldown:
+                _admin2_boundary = load_lebanon_admin2_boundary()
+                _admin2_boundary = _admin2_boundary[_admin2_boundary["admin1_norm"] == _lbn_drilldown].copy()
+                _admin1_display = (
+                    str(_admin2_boundary["admin1_name"].astype(str).str.strip().iloc[0])
+                    if not _admin2_boundary.empty
+                    else _lbn_drilldown.replace("-", " ").title()
+                )
+                st.markdown(
+                    f'<div style="font-family:Inter,sans-serif;font-size:13px;color:#5a6577;'
+                    f'margin-bottom:10px;padding:8px 14px;background:#eef1f6;border-radius:8px;">'
+                    f'Viewing districts inside <strong style="color:#1b2230;">{_admin1_display}</strong></div>',
+                    unsafe_allow_html=True,
+                )
+                _detail_rows = load_lebanon_admin2_priority()
+                _detail_rows = _detail_rows[
+                    (_detail_rows["admin1_norm"] == _lbn_drilldown) &
+                    (_detail_rows["year"] == int(selected_year)) &
+                    (_detail_rows["month"].str.lower() == str(selected_month).lower())
+                ].copy()
+                if _detail_rows.empty:
+                    st.info(
+                        f"Lebanon district priority metrics are not available for {selected_month} {selected_year}. "
+                        f"Showing the districts inside {_admin1_display}."
+                    )
+                _admin2_merged = _admin2_boundary.merge(_detail_rows, on="admin2_norm", how="left")
+                if selected_metric in {"priority_score_country", "priority_score_global", "displaced"}:
+                    _detail_metric = "priority_score"
+                    _detail_scale = SCALE_BLUE
+                    _detail_fmt = lambda v: f"{v:.3f}"
+                    _detail_label = "Priority Score"
+                elif selected_metric == "fatalities":
+                    _detail_metric = "fatalities"
+                    _detail_scale = SCALE_WARM
+                    _detail_fmt = fmt_big
+                    _detail_label = "Fatalities"
+                elif selected_metric == "population_exposure":
+                    _detail_metric = "population_exposure"
+                    _detail_scale = SCALE_GOLD
+                    _detail_fmt = fmt_big
+                    _detail_label = "Pop. Exposure"
+                else:
+                    _detail_metric = "events"
+                    _detail_scale = SCALE_TEAL
+                    _detail_fmt = fmt_big
+                    _detail_label = "Events"
+                for _col in ["priority_score", "events", "fatalities", "population_exposure"]:
+                    _admin2_merged[_col] = pd.to_numeric(_admin2_merged.get(_col, 0), errors="coerce").fillna(0)
+                _fig2 = px.choropleth_mapbox(
+                    _admin2_merged,
+                    geojson=json.loads(_admin2_merged.to_json()),
+                    locations="admin2_norm",
+                    featureidkey="properties.admin2_norm",
+                    color=_detail_metric,
+                    color_continuous_scale=_detail_scale,
+                    hover_name="admin2_label",
+                    hover_data={
+                        "priority_score": ":.3f",
+                        "events": True,
+                        "fatalities": True,
+                        "population_exposure": True,
+                        "admin2_norm": False,
+                    },
+                    mapbox_style="carto-positron",
+                    center=build_mapbox_center(_admin2_merged),
+                    zoom=build_mapbox_zoom(_admin2_merged, base_zoom=6.6, max_zoom=9.8),
+                    opacity=0.9,
+                    title=f"{_admin1_display} — {_detail_label} by District",
+                )
+                _fig2.update_layout(
+                    **LIGHT_LAYOUT,
+                    height=800,
+                    coloraxis_colorbar=dict(
+                        title=_detail_label,
+                        tickfont=dict(family="Inter", size=10, color="#5a6577"),
+                        title_font=dict(family="Inter", size=11, color="#1b2230"),
+                    ),
+                )
+                st.plotly_chart(_fig2, use_container_width=True, key="country_priority_map")
+                st.markdown(
+                    f'<div class="section-title"><span class="section-dot"></span>Top {_admin1_display} Districts by {_detail_label}</div>',
+                    unsafe_allow_html=True,
+                )
+                _top_d = (
+                    _admin2_merged[_admin2_merged[_detail_metric] > 0]
+                    .sort_values(_detail_metric, ascending=False)[["admin2_label", _detail_metric]]
+                    .head(10)
+                    .reset_index(drop=True)
+                )
+                if _top_d.empty:
+                    st.info(f"No districts with {_detail_label.lower()} above 0 for this period.")
+                else:
+                    render_top10_grid(_top_d, "admin2_label", _detail_metric, fmt_fn=_detail_fmt)
+            else:
+                event = st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    on_select="rerun",
+                    selection_mode=("points",),
+                    key="country_priority_map",
+                )
+                clicked_admin1 = extract_selected_map_location(event)
+                if clicked_admin1 and clicked_admin1 != _lbn_drilldown:
+                    st.session_state["country_admin1_drilldown"] = clicked_admin1
+                    st.session_state["country_map_level"] = "admin2"
+                    st.rerun()
+                st.caption("Click a governorate to zoom into its admin2 districts.")
+                st.markdown(
+                    f'<div class="section-title"><span class="section-dot"></span>Top Governorates by {metric_label(selected_metric)}</div>',
+                    unsafe_allow_html=True
+                )
+                top_admin = (
+                    merged[merged[selected_metric] > 0]
+                    .sort_values(selected_metric, ascending=False)[["admin_name", selected_metric]]
+                    .head(10)
+                    .reset_index(drop=True)
+                )
+                if top_admin.empty:
+                    st.info(f"No admin areas with {metric_label(selected_metric).lower()} above 0 for this period.")
+                else:
+                    render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_fn)
         else:
             st.plotly_chart(fig, use_container_width=True, key="country_priority_map")
 
-        st.markdown(
-            f'<div class="section-title"><span class="section-dot"></span>Top Admin1 by {metric_label(selected_metric)}</div>',
-            unsafe_allow_html=True
-        )
-        top_admin = (
-            merged[merged[selected_metric] > 0]
-            .sort_values(selected_metric, ascending=False)[["admin_name", selected_metric]]
-            .head(10)
-            .reset_index(drop=True)
-        )
-        if top_admin.empty:
-            st.info(f"No admin areas with {metric_label(selected_metric).lower()} above 0 for this period.")
-        else:
-            render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_fn)
-
-        if selected_country_norm == "lebanon":
-            render_lebanon_admin2_drilldown(
-                st.session_state.get("country_admin1_drilldown"),
-                selected_year,
-                selected_month,
-                country_mode="Priority",
-                selected_metric=selected_metric,
+            st.markdown(
+                f'<div class="section-title"><span class="section-dot"></span>Top Admin1 by {metric_label(selected_metric)}</div>',
+                unsafe_allow_html=True
             )
+            top_admin = (
+                merged[merged[selected_metric] > 0]
+                .sort_values(selected_metric, ascending=False)[["admin_name", selected_metric]]
+                .head(10)
+                .reset_index(drop=True)
+            )
+            if top_admin.empty:
+                st.info(f"No admin areas with {metric_label(selected_metric).lower()} above 0 for this period.")
+            else:
+                render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_fn)
 
     # ─────────────────────────────────────────────
     # DISPLACEMENT STORY — full period 2024–2026

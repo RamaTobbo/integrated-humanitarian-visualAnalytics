@@ -458,6 +458,7 @@ lbn_admin2_fallback_path = BASE_DIR / "data" / "raw"     / "boundaries" / "geoBo
 lbn_admin2_clean_path    = BASE_DIR / "data" / "cleaned" / "boundaries" / "lbn_admin2.geojson"
 lbn_admin2_priority_path = BASE_DIR / "data" / "cleaned" / "lebanon"    / "lebanon_priority_admin2_enhanced.csv"
 lbn_admin2_conflict_path = BASE_DIR / "data" / "cleaned" / "global"     / "conflict_standardized_monthlybytype.csv"
+raw_acled_path          = BASE_DIR / "data" / "raw"     / "global"      / "ACLED.csv"
 
 # ──────────────────────────────────────────────────
 # CONSTANTS
@@ -816,6 +817,7 @@ def standardize_lebanon_admin2_name(value):
     mapping = {
         "akkar": "akkar",
         "al batroun": "batroun",
+        "el batroun": "batroun",
         "batroun": "batroun",
         "aley": "aley",
         "baabda": "baabda",
@@ -847,6 +849,9 @@ def standardize_lebanon_admin2_name(value):
         "marjayoun": "marjaayoun",
         "marjaayoun": "marjaayoun",
         "al miniyeh al danniyeh": "al miniyeh al danniyeh",
+        "el miniyeh al danniyeh": "al miniyeh al danniyeh",
+        "el minieh dennie": "al miniyeh al danniyeh",
+        "el minieh denniyeh": "al miniyeh al danniyeh",
         "minieh danniyeh": "al miniyeh al danniyeh",
         "al miniyeh-danniyeh": "al miniyeh al danniyeh",
         "nabatieh": "nabatiye",
@@ -994,11 +999,34 @@ def build_lebanon_admin2_conflict_view(admin1_norm, selected_year, selected_mont
         (detail_rows["month_num"] == int(month_num)) &
         (detail_rows["event_type_norm"] == event_type_norm)
     ].copy()
+    acled_rows = load_lebanon_acled_admin2_matches().copy()
+    if not acled_rows.empty:
+        acled_rows["event_type_norm"] = acled_rows["event_type"].astype(str).str.strip().str.lower()
+        acled_exact = acled_rows[
+            (acled_rows["admin1_norm"] == admin1_norm) &
+            (acled_rows["year"] == int(selected_year)) &
+            (acled_rows["month_num"] == int(month_num)) &
+            (acled_rows["event_type_norm"] == event_type_norm)
+        ].copy()
+    else:
+        acled_exact = pd.DataFrame(
+            columns=[
+                "admin2_norm", "events", "fatalities", "population_exposure",
+                "has_acled_data", "acled_match_status",
+            ]
+        )
 
     estimated = False
     estimate_note = None
 
-    if exact.empty:
+    if exact.empty and not acled_exact.empty:
+        exact = acled_exact[
+            [
+                "admin2_norm", "events", "fatalities", "population_exposure",
+                "has_acled_data", "acled_match_status",
+            ]
+        ].copy()
+    elif exact.empty:
         total_rows = admin_conflict[
             (admin_conflict["country_norm"] == "lebanon") &
             (admin_conflict["admin1_norm"] == admin1_norm) &
@@ -1056,17 +1084,58 @@ def build_lebanon_admin2_conflict_view(admin1_norm, selected_year, selected_mont
                 f"from {basis_label} within {admin1_norm.replace('-', ' ').title()}."
             )
 
-    merged = boundary.merge(
-        exact.groupby("admin2_norm", as_index=False).agg({
-            "events": "sum",
-            "fatalities": "sum",
-            "population_exposure": "sum",
-        }) if not exact.empty else pd.DataFrame(columns=["admin2_norm", "events", "fatalities", "population_exposure"]),
-        on="admin2_norm",
-        how="left",
-    )
+    if not exact.empty:
+        metric_source = (
+            exact.groupby("admin2_norm", as_index=False)
+            .agg({
+                "events": "sum",
+                "fatalities": "sum",
+                "population_exposure": "sum",
+            })
+        )
+    else:
+        metric_source = pd.DataFrame(columns=["admin2_norm", "events", "fatalities", "population_exposure"])
+
+    if not acled_exact.empty:
+        status_source = (
+            acled_exact.groupby("admin2_norm", as_index=False)
+            .agg({
+                "has_acled_data": "max",
+                "acled_match_status": "last",
+            })
+        )
+    elif not exact.empty and not estimated:
+        status_source = metric_source[["admin2_norm", "events"]].copy()
+        status_source["has_acled_data"] = status_source["events"] > 0
+        status_source["acled_match_status"] = status_source["has_acled_data"].map(
+            {True: "Matched ACLED district data", False: "No matched events"}
+        )
+        status_source = status_source[["admin2_norm", "has_acled_data", "acled_match_status"]]
+    else:
+        status_source = pd.DataFrame(columns=["admin2_norm", "has_acled_data", "acled_match_status"])
+
+    merged = boundary.merge(metric_source, on="admin2_norm", how="left")
+    merged = merged.merge(status_source, on="admin2_norm", how="left")
     for col in ["events", "fatalities", "population_exposure"]:
         merged[col] = pd.to_numeric(merged.get(col, 0), errors="coerce").fillna(0)
+    if estimated:
+        merged["has_acled_data"] = False
+        merged["acled_match_status"] = "Estimated from governorate total"
+        merged["acled_data_note"] = "No ACLED district data"
+    else:
+        if "has_acled_data" not in merged.columns:
+            merged["has_acled_data"] = False
+        else:
+            merged["has_acled_data"] = merged["has_acled_data"].fillna(False).astype(bool)
+        if "acled_match_status" not in merged.columns:
+            merged["acled_match_status"] = ""
+        else:
+            merged["acled_match_status"] = merged["acled_match_status"].fillna("")
+        merged.loc[merged["acled_match_status"].eq(""), "acled_match_status"] = "No matched events"
+        merged["acled_data_note"] = merged["has_acled_data"].map(
+            {True: "Matched ACLED district data", False: "No matched events"}
+        )
+    merged["has_acled_data_label"] = merged["has_acled_data"].map({True: "Yes", False: "No"})
     return merged, estimated, estimate_note
 
 def build_lebanon_admin2_priority_view(admin1_norm, selected_year, selected_month):
@@ -1085,17 +1154,29 @@ def build_lebanon_admin2_priority_view(admin1_norm, selected_year, selected_mont
         (base_priority["year"] == int(selected_year)) &
         (base_priority["month_num"] == int(month_num))
     ].copy()
+    conflict_frame, conflict_estimated, conflict_note = build_lebanon_admin2_conflict_view(
+        admin1_norm,
+        selected_year,
+        selected_month,
+        "All",
+    )
+    conflict_fields = [
+        "admin2_norm",
+        "events",
+        "fatalities",
+        "population_exposure",
+        "has_acled_data",
+        "acled_match_status",
+        "acled_data_note",
+        "has_acled_data_label",
+    ]
+    conflict_fields = [col for col in conflict_fields if col in conflict_frame.columns]
+    conflict_source = conflict_frame[conflict_fields].copy() if conflict_fields else pd.DataFrame(columns=["admin2_norm"])
 
     estimated = False
     estimate_note = None
 
     if exact.empty:
-        conflict_frame, conflict_estimated, conflict_note = build_lebanon_admin2_conflict_view(
-            admin1_norm,
-            selected_year,
-            selected_month,
-            "All",
-        )
         static_priority = (
             base_priority
             .sort_values(["year", "month_num"])
@@ -1120,7 +1201,21 @@ def build_lebanon_admin2_priority_view(admin1_norm, selected_year, selected_mont
             "demographic_vulnerability",
         ]
         static_priority = static_priority[[col for col in keep_cols if col in static_priority.columns]].copy()
-        exact = conflict_frame[["admin2_norm", "events", "fatalities", "population_exposure"]].copy()
+        exact = conflict_frame[
+            [
+                col for col in [
+                    "admin2_norm",
+                    "events",
+                    "fatalities",
+                    "population_exposure",
+                    "has_acled_data",
+                    "acled_match_status",
+                    "acled_data_note",
+                    "has_acled_data_label",
+                ]
+                if col in conflict_frame.columns
+            ]
+        ].copy()
         exact = exact.merge(static_priority, on="admin2_norm", how="left")
         for col in [
             "population_exposure",
@@ -1163,6 +1258,25 @@ def build_lebanon_admin2_priority_view(admin1_norm, selected_year, selected_mont
         )
         if conflict_estimated and conflict_note:
             estimate_note = f"{estimate_note} {conflict_note}"
+    else:
+        exact = exact.merge(
+            conflict_source,
+            on="admin2_norm",
+            how="left",
+            suffixes=("", "_conflict"),
+        )
+        for col in ["events", "fatalities", "population_exposure"]:
+            conflict_col = f"{col}_conflict"
+            if conflict_col in exact.columns:
+                exact[col] = pd.to_numeric(exact[col], errors="coerce").fillna(
+                    pd.to_numeric(exact[conflict_col], errors="coerce").fillna(0)
+                )
+        for col in ["has_acled_data", "acled_match_status", "acled_data_note", "has_acled_data_label"]:
+            conflict_col = f"{col}_conflict"
+            if col not in exact.columns and conflict_col in exact.columns:
+                exact[col] = exact[conflict_col]
+            elif conflict_col in exact.columns:
+                exact[col] = exact[col].fillna(exact[conflict_col])
 
     merged = boundary.merge(exact, on="admin2_norm", how="left")
     for col in [
@@ -1170,6 +1284,27 @@ def build_lebanon_admin2_priority_view(admin1_norm, selected_year, selected_mont
         "access_risk", "demographic_vulnerability",
     ]:
         merged[col] = pd.to_numeric(merged.get(col, 0), errors="coerce").fillna(0)
+    if "has_acled_data" not in merged.columns:
+        merged["has_acled_data"] = False
+    else:
+        merged["has_acled_data"] = merged["has_acled_data"].fillna(False).astype(bool)
+    if "acled_match_status" not in merged.columns:
+        merged["acled_match_status"] = merged["has_acled_data"].map(
+            {True: "Matched ACLED district data", False: "No matched events"}
+        )
+    else:
+        merged["acled_match_status"] = merged["acled_match_status"].fillna(
+            merged["has_acled_data"].map({True: "Matched ACLED district data", False: "No matched events"})
+        )
+    if "acled_data_note" not in merged.columns:
+        merged["acled_data_note"] = merged["has_acled_data"].map(
+            {True: "Matched ACLED district data", False: "No matched events"}
+        )
+    else:
+        merged["acled_data_note"] = merged["acled_data_note"].fillna(
+            merged["has_acled_data"].map({True: "Matched ACLED district data", False: "No matched events"})
+        )
+    merged["has_acled_data_label"] = merged["has_acled_data"].map({True: "Yes", False: "No"})
     return merged, estimated, estimate_note
 
 def get_country_admin_rows(admin_df, selected_country_name):
@@ -2677,6 +2812,192 @@ def load_lebanon_admin2_priority():
     ].copy()
     return df
 
+def _summarize_acled_match_status(frame):
+    try:
+        spatial_matches = int(float(pd.to_numeric(frame.get("spatial_match_count", 0), errors="coerce") or 0))
+    except Exception:
+        spatial_matches = 0
+    try:
+        direct_matches = int(float(pd.to_numeric(frame.get("direct_match_count", 0), errors="coerce") or 0))
+    except Exception:
+        direct_matches = 0
+    if spatial_matches and direct_matches:
+        return "Direct + spatial district match"
+    if spatial_matches:
+        return "Spatial district match"
+    if direct_matches:
+        return "Direct admin2 name match"
+    return "No matched events"
+
+@st.cache_data(show_spinner=False)
+def load_lebanon_acled_admin2_matches():
+    columns = [
+        "country", "admin1", "admin2", "event_date", "event_type",
+        "fatalities", "population_best", "latitude", "longitude",
+    ]
+    if not raw_acled_path.exists():
+        return pd.DataFrame(
+            columns=[
+                "year", "month_num", "month", "event_type", "admin1_norm", "admin2_norm",
+                "events", "fatalities", "population_exposure", "has_acled_data",
+                "acled_match_status", "direct_match_count", "spatial_match_count",
+            ]
+        )
+
+    df = pd.read_csv(raw_acled_path, usecols=lambda col: col in columns)
+    for col in ["country", "admin1", "admin2", "event_type"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+    df = df[df["country"].eq("Lebanon")].copy()
+    if df.empty:
+        return pd.DataFrame(
+            columns=[
+                "year", "month_num", "month", "event_type", "admin1_norm", "admin2_norm",
+                "events", "fatalities", "population_exposure", "has_acled_data",
+                "acled_match_status", "direct_match_count", "spatial_match_count",
+            ]
+        )
+
+    df["event_date"] = pd.to_datetime(df["event_date"], errors="coerce")
+    df = df[df["event_date"].notna()].copy()
+    df["year"] = df["event_date"].dt.year.astype(int)
+    df = df[df["year"].between(MIN_YEAR, MAX_YEAR)].copy()
+    df["month_num"] = df["event_date"].dt.month.astype(int)
+    df["month"] = df["event_date"].dt.strftime("%B")
+    df["fatalities"] = pd.to_numeric(df.get("fatalities", 0), errors="coerce").fillna(0)
+    df["population_exposure"] = pd.to_numeric(df.get("population_best", 0), errors="coerce").fillna(0)
+    df["latitude"] = pd.to_numeric(df.get("latitude", None), errors="coerce")
+    df["longitude"] = pd.to_numeric(df.get("longitude", None), errors="coerce")
+    df["admin1_norm"] = df["admin1"].apply(lambda value: standardize_admin_name(value, "Lebanon"))
+    df["admin2_norm_direct"] = df["admin2"].apply(standardize_lebanon_admin2_name)
+
+    boundary = load_lebanon_admin2_boundary()[["admin1_norm", "admin2_norm", "geometry"]].drop_duplicates().copy()
+    boundary = boundary.rename(
+        columns={
+            "admin1_norm": "boundary_admin1_norm",
+            "admin2_norm": "boundary_admin2_norm",
+        }
+    )
+    valid_direct_admin2 = set(boundary["boundary_admin2_norm"].dropna().tolist())
+    direct_admin1_lookup = (
+        boundary[["boundary_admin2_norm", "boundary_admin1_norm"]]
+        .drop_duplicates()
+        .set_index("boundary_admin2_norm")["boundary_admin1_norm"]
+        .to_dict()
+    )
+
+    working = df.reset_index(drop=True).copy()
+    working["boundary_admin1_norm"] = pd.NA
+    working["boundary_admin2_norm"] = pd.NA
+
+    spatial_mask = (
+        working["latitude"].notna() &
+        working["longitude"].notna() &
+        ~boundary.empty
+    )
+    if spatial_mask.any():
+        points_source = working.loc[spatial_mask].drop(
+            columns=["boundary_admin1_norm", "boundary_admin2_norm"],
+            errors="ignore",
+        ).copy()
+        points = gpd.GeoDataFrame(
+            points_source,
+            geometry=gpd.points_from_xy(
+                working.loc[spatial_mask, "longitude"],
+                working.loc[spatial_mask, "latitude"],
+            ),
+            crs="EPSG:4326",
+        )
+        spatial_boundary = boundary[["boundary_admin1_norm", "boundary_admin2_norm", "geometry"]].copy()
+        try:
+            matched = gpd.sjoin(points, spatial_boundary, how="left", predicate="within")
+        except TypeError:
+            matched = gpd.sjoin(points, spatial_boundary, how="left", op="within")
+        except Exception:
+            matched = points.copy()
+            matched["boundary_admin1_norm"] = pd.NA
+            matched["boundary_admin2_norm"] = pd.NA
+            for _, boundary_row in spatial_boundary.iterrows():
+                inside_mask = matched.geometry.within(boundary_row["geometry"])
+                matched.loc[inside_mask, "boundary_admin1_norm"] = boundary_row["boundary_admin1_norm"]
+                matched.loc[inside_mask, "boundary_admin2_norm"] = boundary_row["boundary_admin2_norm"]
+
+        matched = matched[~matched.index.duplicated(keep="first")]
+        working.loc[matched.index, "boundary_admin1_norm"] = matched["boundary_admin1_norm"].values
+        working.loc[matched.index, "boundary_admin2_norm"] = matched["boundary_admin2_norm"].values
+
+    working["matched_admin1_norm"] = pd.NA
+    working["matched_admin2_norm"] = pd.NA
+    working["match_method"] = pd.NA
+
+    # Matching preference:
+    # 1) Use the district polygon hit from event coordinates when available.
+    # 2) Fall back to the raw ACLED admin2 name only when the spatial match is unavailable.
+    # Update this priority here if you want to trust textual matching more aggressively later.
+    spatial_found = working["boundary_admin2_norm"].notna()
+    working.loc[spatial_found, "matched_admin1_norm"] = working.loc[spatial_found, "boundary_admin1_norm"]
+    working.loc[spatial_found, "matched_admin2_norm"] = working.loc[spatial_found, "boundary_admin2_norm"]
+    working.loc[spatial_found, "match_method"] = "Spatial district match"
+
+    direct_found = (
+        working["matched_admin2_norm"].isna() &
+        working["admin2_norm_direct"].isin(valid_direct_admin2)
+    )
+    working.loc[direct_found, "matched_admin1_norm"] = working.loc[direct_found, "admin2_norm_direct"].map(direct_admin1_lookup)
+    working.loc[direct_found, "matched_admin2_norm"] = working.loc[direct_found, "admin2_norm_direct"]
+    working.loc[direct_found, "match_method"] = "Direct admin2 name match"
+
+    matched = working[working["matched_admin2_norm"].notna()].copy()
+    if matched.empty:
+        return pd.DataFrame(
+            columns=[
+                "year", "month_num", "month", "event_type", "admin1_norm", "admin2_norm",
+                "events", "fatalities", "population_exposure", "has_acled_data",
+                "acled_match_status", "direct_match_count", "spatial_match_count",
+            ]
+        )
+
+    matched["direct_match_count"] = (matched["match_method"] == "Direct admin2 name match").astype(int)
+    matched["spatial_match_count"] = (matched["match_method"] == "Spatial district match").astype(int)
+
+    by_type = (
+        matched.groupby(
+            ["year", "month_num", "month", "event_type", "matched_admin1_norm", "matched_admin2_norm"],
+            as_index=False,
+        )
+        .agg(
+            events=("event_date", "size"),
+            fatalities=("fatalities", "sum"),
+            population_exposure=("population_exposure", "sum"),
+            direct_match_count=("direct_match_count", "sum"),
+            spatial_match_count=("spatial_match_count", "sum"),
+        )
+        .rename(
+            columns={
+                "matched_admin1_norm": "admin1_norm",
+                "matched_admin2_norm": "admin2_norm",
+            }
+        )
+    )
+    by_type["has_acled_data"] = True
+    by_type["acled_match_status"] = by_type.apply(_summarize_acled_match_status, axis=1)
+
+    all_rows = (
+        by_type.groupby(["year", "month_num", "month", "admin1_norm", "admin2_norm"], as_index=False)
+        .agg(
+            events=("events", "sum"),
+            fatalities=("fatalities", "sum"),
+            population_exposure=("population_exposure", "sum"),
+            direct_match_count=("direct_match_count", "sum"),
+            spatial_match_count=("spatial_match_count", "sum"),
+        )
+    )
+    all_rows["event_type"] = "All"
+    all_rows["has_acled_data"] = True
+    all_rows["acled_match_status"] = all_rows.apply(_summarize_acled_match_status, axis=1)
+
+    return pd.concat([all_rows, by_type], ignore_index=True)
+
 def render_lebanon_admin2_drilldown(
     selected_admin1_norm,
     selected_year,
@@ -2875,6 +3196,7 @@ defaults = [
     ("country_event_type","All"),
     ("country_metric","events"),
     ("country_admin1_drilldown", None),
+    ("country_map_level", "admin1"),
 ]
 for key, default in defaults:
     if key not in st.session_state:
@@ -2925,6 +3247,8 @@ if st.session_state["view"] == "world":
             "world_country": "All",
             "selected_iso3": None,
             "selected_country_name": None,
+            "country_admin1_drilldown": None,
+            "country_map_level": "admin1",
         })
         st.rerun()
 
@@ -3103,6 +3427,8 @@ if st.session_state["view"] == "world":
                     "view":"country",
                     "country_year":None,
                     "country_month":None,
+                    "country_admin1_drilldown": None,
+                    "country_map_level": "admin1",
                 })
                 st.rerun()
         else:
@@ -3151,6 +3477,8 @@ if st.session_state["view"] == "world":
                     "view":"country",
                     "country_year":None,
                     "country_month":None,
+                    "country_admin1_drilldown": None,
+                    "country_map_level": "admin1",
                 })
                 st.rerun()
 
@@ -3295,6 +3623,8 @@ if st.session_state["view"] == "world":
                     "view":"country",
                     "country_year":None,
                     "country_month":None,
+                    "country_admin1_drilldown": None,
+                    "country_map_level": "admin1",
                 })
                 st.rerun()
         else:
@@ -3347,6 +3677,8 @@ if st.session_state["view"] == "world":
                     "view":"country",
                     "country_year":None,
                     "country_month":None,
+                    "country_admin1_drilldown": None,
+                    "country_map_level": "admin1",
                 })
                 st.rerun()
 
@@ -3430,11 +3762,14 @@ else:
             "world_country": "All",
             "selected_iso3": None,
             "selected_country_name": None,
+            "country_admin1_drilldown": None,
+            "country_map_level": "admin1",
         })
         st.rerun()
 
     if selected_country_norm != "lebanon":
         st.session_state["country_admin1_drilldown"] = None
+        st.session_state["country_map_level"] = "admin1"
 
     st.sidebar.markdown('<div class="sidebar-section">Navigation</div>', unsafe_allow_html=True)
     _in_lbn_district_view = (
@@ -3444,6 +3779,7 @@ else:
     if _in_lbn_district_view:
         if st.sidebar.button("← Back to Lebanon Map"):
             st.session_state["country_admin1_drilldown"] = None
+            st.session_state["country_map_level"] = "admin1"
             st.rerun()
     else:
         if st.sidebar.button("← Back to World Map"):
@@ -3452,6 +3788,8 @@ else:
                 "world_country": "All",
                 "selected_iso3": None,
                 "selected_country_name": None,
+                "country_admin1_drilldown": None,
+                "country_map_level": "admin1",
             })
             st.rerun()
 
@@ -3737,7 +4075,7 @@ else:
             center=build_mapbox_center(merged),
             zoom=build_mapbox_zoom(merged, base_zoom=5.0, max_zoom=8.4),
             opacity=0.88,
-            title=f"{selected_country_name} — {metric_label(selected_metric)} by Admin1",
+            title=f"{selected_country_name} — {metric_label(selected_metric)} by {'Governorate' if selected_country_norm == 'lebanon' else 'Admin1'}",
         )
         fig.update_layout(
             **LIGHT_LAYOUT,
@@ -3750,6 +4088,7 @@ else:
         )
         if selected_country_norm == "lebanon":
             _lbn_drilldown = st.session_state.get("country_admin1_drilldown")
+            st.session_state["country_map_level"] = "admin2" if _lbn_drilldown else "admin1"
             if _lbn_drilldown:
                 # ── Admin2 district view ──
                 _a1_match = boundary_gdf[boundary_gdf["admin_name_norm"] == _lbn_drilldown]
@@ -3767,6 +4106,14 @@ else:
                 _admin2_gdf, _estimated, _estimate_note = build_lebanon_admin2_conflict_view(
                     _lbn_drilldown, selected_year, selected_month, selected_event_type
                 )
+                _priority_hover = load_lebanon_admin2_priority().copy()
+                _priority_hover = _priority_hover[
+                    (_priority_hover["admin1_norm"] == _lbn_drilldown) &
+                    (_priority_hover["year"] == int(selected_year)) &
+                    (_priority_hover["month_num"] == int(MONTH_MAP.get(str(selected_month).strip(), 0)))
+                ][["admin2_norm", "priority_score"]].drop_duplicates()
+                if "priority_score" not in _admin2_gdf.columns and not _priority_hover.empty:
+                    _admin2_gdf = _admin2_gdf.merge(_priority_hover, on="admin2_norm", how="left")
                 if _estimated and _estimate_note:
                     st.info(_estimate_note)
                 if _admin2_gdf.empty:
@@ -3782,12 +4129,28 @@ else:
                         color=_d_metric,
                         color_continuous_scale=_d_cscale,
                         hover_name="admin2_label",
-                        hover_data={"events": True, "fatalities": True, "population_exposure": True, "admin2_norm": False},
+                        hover_data={
+                            "has_acled_data_label": True,
+                            "acled_data_note": True,
+                            "acled_match_status": True,
+                            "events": True,
+                            "fatalities": True,
+                            "population_exposure": True,
+                            "priority_score": ":.3f",
+                            "admin2_norm": False,
+                        },
                         mapbox_style="carto-positron",
                         center=build_mapbox_center(_admin2_gdf),
                         zoom=build_mapbox_zoom(_admin2_gdf, base_zoom=6.6, max_zoom=9.8),
                         opacity=0.9,
                         title=f"{_admin1_display} — {metric_label(_d_metric)} by District",
+                        labels={
+                            "has_acled_data_label": "ACLED District Data",
+                            "acled_data_note": "District Data Note",
+                            "acled_match_status": "Match Method",
+                            "population_exposure": "Population Exposure",
+                            "priority_score": "Priority Score",
+                        },
                     )
                     _fig2.update_layout(
                         **LIGHT_LAYOUT,
@@ -3826,6 +4189,7 @@ else:
                 clicked_admin1 = extract_selected_map_location(event)
                 if clicked_admin1 and clicked_admin1 != _lbn_drilldown:
                     st.session_state["country_admin1_drilldown"] = clicked_admin1
+                    st.session_state["country_map_level"] = "admin2"
                     st.rerun()
                 st.caption("Click a governorate to zoom into its admin2 districts.")
                 st.markdown(
@@ -3999,7 +4363,7 @@ else:
             center=build_mapbox_center(merged),
             zoom=build_mapbox_zoom(merged, base_zoom=5.0, max_zoom=8.4),
             opacity=0.88,
-            title=f"{selected_country_name} — {metric_label(selected_metric)} by Admin1",
+            title=f"{selected_country_name} — {metric_label(selected_metric)} by {'Governorate' if selected_country_norm == 'lebanon' else 'Admin1'}",
         )
         fig.update_layout(
             **LIGHT_LAYOUT,
@@ -4012,6 +4376,7 @@ else:
         )
         if selected_country_norm == "lebanon":
             _lbn_drilldown = st.session_state.get("country_admin1_drilldown")
+            st.session_state["country_map_level"] = "admin2" if _lbn_drilldown else "admin1"
             if _lbn_drilldown:
                 # ── Admin2 district view ──
                 _a1_match = boundary_gdf[boundary_gdf["admin_name_norm"] == _lbn_drilldown]
@@ -4050,10 +4415,10 @@ else:
                         _d_fmt = fmt_big
                         _d_label = "Pop. Exposure"
                     else:
-                        _d_metric = "events"
-                        _d_cscale = SCALE_TEAL
-                        _d_fmt = fmt_big
-                        _d_label = "Events"
+                        _d_metric = "priority_score" if selected_metric == "displaced" else "events"
+                        _d_cscale = SCALE_BLUE if _d_metric == "priority_score" else SCALE_TEAL
+                        _d_fmt = (lambda v: f"{v:.3f}") if _d_metric == "priority_score" else fmt_big
+                        _d_label = "Priority Score" if _d_metric == "priority_score" else "Events"
                     for _col in ["priority_score", "events", "fatalities", "population_exposure"]:
                         if _col not in _admin2_gdf.columns:
                             _admin2_gdf[_col] = 0
@@ -4067,9 +4432,13 @@ else:
                         color_continuous_scale=_d_cscale,
                         hover_name="admin2_label",
                         hover_data={
+                            "has_acled_data_label": True,
+                            "acled_data_note": True,
+                            "acled_match_status": True,
                             "priority_score": ":.3f",
                             "events": True,
                             "fatalities": True,
+                            "population_exposure": True,
                             "admin2_norm": False,
                         },
                         mapbox_style="carto-positron",
@@ -4077,6 +4446,13 @@ else:
                         zoom=build_mapbox_zoom(_admin2_gdf, base_zoom=6.6, max_zoom=9.8),
                         opacity=0.9,
                         title=f"{_admin1_display} — {_d_label} by District",
+                        labels={
+                            "has_acled_data_label": "ACLED District Data",
+                            "acled_data_note": "District Data Note",
+                            "acled_match_status": "Match Method",
+                            "population_exposure": "Population Exposure",
+                            "priority_score": "Priority Score",
+                        },
                     )
                     _fig2.update_layout(
                         **LIGHT_LAYOUT,
@@ -4115,6 +4491,7 @@ else:
                 clicked_admin1 = extract_selected_map_location(event)
                 if clicked_admin1 and clicked_admin1 != _lbn_drilldown:
                     st.session_state["country_admin1_drilldown"] = clicked_admin1
+                    st.session_state["country_map_level"] = "admin2"
                     st.rerun()
                 st.caption("Click a governorate to zoom into its admin2 districts.")
                 st.markdown(
