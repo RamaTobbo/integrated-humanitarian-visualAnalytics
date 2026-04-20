@@ -448,7 +448,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 world_geojson_path       = BASE_DIR / "data" / "raw"     / "boundaries" / "world_countries.geojson"
 conflict_country_path    = BASE_DIR / "data" / "cleaned" / "global"     / "conflict_country_monthlybytype.csv"
-conflict_admin_path      = BASE_DIR / "data" / "cleaned" / "global"     / "conflict_standardized_monthlybytype.csv"
+conflict_admin_path      = BASE_DIR / "data" / "cleaned" / "global"     / "admin1_monthlybytype_with_centroids.csv"
 priority_country_path    = BASE_DIR / "data" / "cleaned" / "global"     / "global_priority_country_with_displacement_monthly.csv"
 priority_admin1_path     = BASE_DIR / "data" / "cleaned" / "global"     / "global_priority_admin1_with_displacement_monthly.csv"
 displacement_dest_path   = BASE_DIR / "data" / "cleaned" / "global"     / "displacement_admin1_destination_monthly_2024_2026.csv"
@@ -635,6 +635,44 @@ def default_latest_period_with_year_bounds(df, min_year=MIN_YEAR, max_year=MAX_Y
         return default_latest_period(df)
     last = temp.iloc[-1]
     return int(last["year"]), str(last["month"])
+
+def build_available_periods(*frames):
+    period_frames = []
+    for frame in frames:
+        if frame is None or frame.empty:
+            continue
+        if not {"year", "month_num", "month"}.issubset(frame.columns):
+            continue
+        period_frame = frame[["year", "month_num", "month"]].copy()
+        period_frame["year"] = pd.to_numeric(period_frame["year"], errors="coerce")
+        period_frame["month_num"] = pd.to_numeric(period_frame["month_num"], errors="coerce")
+        period_frame["month"] = period_frame["month"].astype(str).str.strip()
+        period_frame = period_frame[
+            period_frame["year"].notna() &
+            period_frame["month_num"].notna() &
+            period_frame["month"].ne("") &
+            period_frame["month"].ne("nan")
+        ].copy()
+        if period_frame.empty:
+            continue
+        period_frame["year"] = period_frame["year"].astype(int)
+        period_frame["month_num"] = period_frame["month_num"].astype(int)
+        period_frame = period_frame[
+            (period_frame["year"] >= MIN_YEAR) &
+            (period_frame["year"] <= MAX_YEAR)
+        ].copy()
+        if not period_frame.empty:
+            period_frames.append(period_frame)
+
+    if not period_frames:
+        return pd.DataFrame(columns=["year", "month_num", "month"])
+
+    return (
+        pd.concat(period_frames, ignore_index=True)
+        .drop_duplicates()
+        .sort_values(["year", "month_num"])
+        .reset_index(drop=True)
+    )
 
 def ensure_required_files():
     required = [
@@ -2759,20 +2797,32 @@ else:
         st.stop()
 
     country_conflict_rows = get_country_admin_rows(admin_conflict, selected_country_name)
+    country_conflict_country_rows = get_country_admin_rows(country_conflict, selected_country_name)
     country_priority_rows = get_country_admin_rows(admin1_priority, selected_country_name)
 
-    if country_conflict_rows.empty and country_priority_rows.empty:
+    if country_conflict_rows.empty and country_conflict_country_rows.empty and country_priority_rows.empty:
         st.warning("No admin-level data found for this country.")
         st.stop()
 
-    period_frames = []
-    for source_df in (country_conflict_rows, country_priority_rows):
-        if not source_df.empty:
-            period_frames.append(source_df[["year", "month_num", "month"]].copy())
-    available_periods = pd.concat(period_frames, ignore_index=True).drop_duplicates() if period_frames else pd.DataFrame()
-    available_source = available_periods if not available_periods.empty else (
-        country_conflict_rows if not country_conflict_rows.empty else country_priority_rows
+    st.sidebar.markdown('<div class="sidebar-section">Country View</div>', unsafe_allow_html=True)
+    country_mode = st.sidebar.radio("Mode", ["Conflict", "Priority"], horizontal=True)
+
+    conflict_periods = build_available_periods(
+        country_conflict_rows,
+        country_conflict_country_rows,
     )
+    priority_periods = build_available_periods(country_priority_rows)
+    available_source = (
+        conflict_periods
+        if country_mode == "Conflict"
+        else priority_periods
+    )
+    if available_source.empty:
+        available_source = (
+            conflict_periods
+            if not conflict_periods.empty
+            else priority_periods
+        )
     avail_years = sorted([y for y in available_source["year"].dropna().unique() if MIN_YEAR <= y <= MAX_YEAR])
 
     if not avail_years:
@@ -2811,9 +2861,6 @@ else:
     )
     st.session_state["country_month"] = selected_month
 
-    st.sidebar.markdown('<div class="sidebar-section">Country View</div>', unsafe_allow_html=True)
-    country_mode = st.sidebar.radio("Mode", ["Conflict", "Priority"], horizontal=True)
-
     st.markdown(f"""
     <div class="dash-header">
       <div>
@@ -2833,15 +2880,30 @@ else:
         selected_year,
         selected_month,
     )
+    selected_country_conflict_country_row = get_country_priority_period_row(
+        country_conflict_country_rows,
+        selected_year,
+        selected_month,
+    )
 
     if country_mode == "Conflict":
-        avail_event_types = (
-            country_conflict_rows[
-                (country_conflict_rows["year"] == selected_year) &
-                (country_conflict_rows["month"].str.lower() == selected_month.lower())
-            ]["event_type"].dropna().drop_duplicates().sort_values().tolist()
-        )
-        avail_event_types = ["All"] + avail_event_types
+        conflict_period_rows = country_conflict_rows[
+            (country_conflict_rows["year"] == selected_year) &
+            (country_conflict_rows["month"].str.lower() == selected_month.lower())
+        ].copy()
+        country_conflict_period_rows = country_conflict_country_rows[
+            (country_conflict_country_rows["year"] == selected_year) &
+            (country_conflict_country_rows["month"].str.lower() == selected_month.lower())
+        ].copy()
+        event_type_values = []
+        for source_df in (conflict_period_rows, country_conflict_period_rows):
+            if source_df.empty or "event_type" not in source_df.columns:
+                continue
+            for event_type in source_df["event_type"].dropna().astype(str).str.strip().tolist():
+                if not event_type or event_type.lower() == "nan" or event_type in event_type_values:
+                    continue
+                event_type_values.append(event_type)
+        avail_event_types = ["All"] + sorted([event_type for event_type in event_type_values if event_type != "All"])
 
         selected_event_type = st.sidebar.selectbox(
             "Event Type",
@@ -2859,11 +2921,13 @@ else:
         )
         st.session_state["country_metric"] = selected_metric
 
-        conflict_slice = country_conflict_rows[
-            (country_conflict_rows["year"] == selected_year) &
-            (country_conflict_rows["month"].str.lower() == selected_month.lower())
-        ].copy()
+        conflict_slice = conflict_period_rows.copy()
         conflict_slice = filter_event_type(conflict_slice, selected_event_type)
+        country_conflict_period_filtered = filter_event_type(
+            country_conflict_period_rows,
+            selected_event_type,
+        )
+        has_admin_conflict_data = not conflict_slice.empty
 
         agg_dict = {"events":"sum", "fatalities":"sum"}
         if "population_exposure" in conflict_slice.columns:
@@ -2884,6 +2948,17 @@ else:
         total_ev = int(merged["events"].sum())
         total_fat = int(merged["fatalities"].sum())
         total_exp = float(merged["population_exposure"].sum())
+        conflict_total_subtitle = "Admin1 aggregation"
+
+        if not has_admin_conflict_data and not country_conflict_period_filtered.empty:
+            total_ev = int(country_conflict_period_filtered["events"].sum())
+            total_fat = int(country_conflict_period_filtered["fatalities"].sum())
+            total_exp = float(
+                country_conflict_period_filtered["population_exposure"].sum()
+                if "population_exposure" in country_conflict_period_filtered.columns
+                else 0
+            )
+            conflict_total_subtitle = "Country-level total"
 
         st.markdown(f"""
         <div class="kpi-row">
@@ -2897,7 +2972,7 @@ else:
             <div class="kpi-accent"></div>
             <div class="kpi-label">Total Fatalities</div>
             <div class="kpi-value">{total_fat:,}</div>
-            <div class="kpi-sub">Admin1 aggregation</div>
+            <div class="kpi-sub">{conflict_total_subtitle}</div>
           </div>
           <div class="kpi-card teal">
             <div class="kpi-accent"></div>
@@ -2907,6 +2982,12 @@ else:
           </div>
         </div>
         """, unsafe_allow_html=True)
+
+        if not has_admin_conflict_data and selected_country_conflict_country_row is not None:
+            st.info(
+                f"Conflict data is available for {selected_month} {selected_year}, but admin1 conflict rows are not available for this period yet. "
+                "Year and month options now follow the country-level conflict series, while the admin1 map and ranking remain limited to periods with admin coverage."
+            )
 
         cscale = SCALE_BLUE if selected_metric == "events" else SCALE_WARM if selected_metric == "fatalities" else SCALE_GOLD
 
@@ -2950,7 +3031,10 @@ else:
             .reset_index(drop=True)
         )
         if top_admin.empty:
-            st.info(f"No admin areas with {metric_label(selected_metric).lower()} above 0 for this period.")
+            if not has_admin_conflict_data and selected_country_conflict_country_row is not None:
+                st.info("Admin1 conflict data is unavailable for this period, so no admin-level ranking can be shown yet.")
+            else:
+                st.info(f"No admin areas with {metric_label(selected_metric).lower()} above 0 for this period.")
         else:
             render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_big)
 
