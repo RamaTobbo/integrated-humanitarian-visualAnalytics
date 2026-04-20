@@ -3,6 +3,12 @@ import pandas as pd
 import unicodedata
 import re
 
+from lebanon_displacement_fallback import (
+    apply_lebanon_displacement_fallback,
+    ensure_displacement_metadata,
+    summarize_country_months,
+)
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 input_path = BASE_DIR / "data" / "raw" / "global" / "global-iom-dtm-from-api-admin-0-to-2.csv"
@@ -115,6 +121,8 @@ dest = (
     })
 )
 
+dest = ensure_displacement_metadata(dest)
+dest = apply_lebanon_displacement_fallback(dest, value_col="displaced_in")
 dest.to_csv(dest_output_path, index=False)
 
 # =========================================================
@@ -136,6 +144,7 @@ origin = (
     })
 )
 
+origin = ensure_displacement_metadata(origin)
 origin.to_csv(origin_output_path, index=False)
 
 print("Saved cleaned rows to:", cleaned_output_path)
@@ -144,3 +153,10 @@ print("Saved origin monthly admin1 to:", origin_output_path)
 print("Cleaned rows:", len(df))
 print("Destination rows:", len(dest))
 print("Origin rows:", len(origin))
+
+summary = summarize_country_months(dest, country="lebanon", value_col="displaced_in")
+print("\nLebanon February and March 2026 destination totals:")
+if summary.empty:
+    print("No Lebanon February or March 2026 rows found.")
+else:
+    print(summary.to_string(index=False))

@@ -11,6 +11,14 @@ from need_utils import (
     load_need_data,
     merge_need_scores,
 )
+from lebanon_displacement_fallback import (
+    DISPLACEMENT_ADJUSTED_FLAG_COL,
+    DISPLACEMENT_SOURCE_NOTE_COL,
+    apply_lebanon_displacement_fallback,
+    combine_unique_text,
+    ensure_displacement_metadata,
+    summarize_country_months,
+)
 
 # ==================================================
 # PATHS
@@ -305,12 +313,24 @@ if "displaced_from" in displacement.columns:
 else:
     displacement["displaced_from"] = 0
 
+displacement = ensure_displacement_metadata(displacement)
+displacement = apply_lebanon_displacement_fallback(displacement, value_col="displaced_in")
+
 displacement = displacement[
     displacement["year"].between(MIN_YEAR, MAX_YEAR)
 ].copy()
 
 displacement = displacement[
-    ["country", "admin1_norm", "year", "month_num", "displaced_in", "displaced_from"]
+    [
+        "country",
+        "admin1_norm",
+        "year",
+        "month_num",
+        "displaced_in",
+        "displaced_from",
+        DISPLACEMENT_ADJUSTED_FLAG_COL,
+        DISPLACEMENT_SOURCE_NOTE_COL,
+    ]
 ].copy()
 
 displacement = displacement.dropna(subset=["country", "admin1_norm", "year", "month_num"])
@@ -320,11 +340,24 @@ displacement = (
     .agg({
         "displaced_in": "sum",
         "displaced_from": "sum",
+        DISPLACEMENT_ADJUSTED_FLAG_COL: "max",
+        DISPLACEMENT_SOURCE_NOTE_COL: combine_unique_text,
     })
 )
 
 # use destination displacement as main humanitarian load
 displacement["displaced"] = displacement["displaced_in"]
+
+country_displacement_monthly = (
+    displacement.groupby(["country", "year", "month_num"], as_index=False)
+    .agg({
+        "displaced": "sum",
+        "displaced_in": "sum",
+        "displaced_from": "sum",
+        DISPLACEMENT_ADJUSTED_FLAG_COL: "max",
+        DISPLACEMENT_SOURCE_NOTE_COL: combine_unique_text,
+    })
+)
 
 # ==================================================
 # MERGE ACLED + DISPLACEMENT
@@ -338,6 +371,7 @@ admin1_monthly = admin1_monthly.merge(
 admin1_monthly["displaced_in"] = admin1_monthly["displaced_in"].fillna(0)
 admin1_monthly["displaced_from"] = admin1_monthly["displaced_from"].fillna(0)
 admin1_monthly["displaced"] = admin1_monthly["displaced"].fillna(0)
+admin1_monthly = ensure_displacement_metadata(admin1_monthly)
 
 # ==================================================
 # LOG TRANSFORMS
@@ -457,6 +491,8 @@ admin1_monthly = admin1_monthly[
         "displaced",
         "displaced_in",
         "displaced_from",
+        DISPLACEMENT_ADJUSTED_FLAG_COL,
+        DISPLACEMENT_SOURCE_NOTE_COL,
         "centroid_latitude",
         "centroid_longitude",
         "events_norm_country",
@@ -491,9 +527,19 @@ country_monthly = (
         "events": "sum",
         "fatalities": "sum",
         "population_exposure": "sum",
-        "displaced": "sum",
     })
 )
+
+country_monthly = country_monthly.merge(
+    country_displacement_monthly,
+    on=["country", "year", "month_num"],
+    how="left"
+)
+
+country_monthly["displaced"] = country_monthly["displaced"].fillna(0)
+country_monthly["displaced_in"] = country_monthly["displaced_in"].fillna(0)
+country_monthly["displaced_from"] = country_monthly["displaced_from"].fillna(0)
+country_monthly = ensure_displacement_metadata(country_monthly)
 
 country_monthly["events_log"] = np.log1p(country_monthly["events"])
 country_monthly["fatalities_log"] = np.log1p(country_monthly["fatalities"])
@@ -571,6 +617,10 @@ country_monthly = country_monthly[
         "fatalities",
         "population_exposure",
         "displaced",
+        "displaced_in",
+        "displaced_from",
+        DISPLACEMENT_ADJUSTED_FLAG_COL,
+        DISPLACEMENT_SOURCE_NOTE_COL,
         "events_log",
         "fatalities_log",
         "exposure_log",
@@ -620,4 +670,24 @@ print("\nCountry sample:")
 print(country_monthly.head(10))
 
 print("\nCheck displacement merge:")
-print(admin1_monthly[["country", "admin1_norm", "year", "month_num", "displaced", "displaced_in", "displaced_from"]].head(20))
+print(
+    admin1_monthly[
+        [
+            "country",
+            "admin1_norm",
+            "year",
+            "month_num",
+            "displaced",
+            "displaced_in",
+            "displaced_from",
+            DISPLACEMENT_ADJUSTED_FLAG_COL,
+        ]
+    ].head(20)
+)
+
+summary = summarize_country_months(country_monthly, country="lebanon", value_col="displaced_in")
+print("\nLebanon February and March 2026 priority displacement totals:")
+if summary.empty:
+    print("No Lebanon February or March 2026 rows found.")
+else:
+    print(summary.to_string(index=False))

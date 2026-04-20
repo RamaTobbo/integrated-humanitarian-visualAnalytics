@@ -21,6 +21,14 @@ from dashboard_compare_utils import (
     build_country_comparison_radar,
     prepare_radar_comparison_data,
 )
+from displacement_snapshot_utils import (
+    CUMULATIVE_DISPLACEMENT_NOTE,
+    filter_to_period,
+    format_period_label,
+    get_latest_displacement_snapshot,
+    get_latest_period,
+    get_peak_displacement,
+)
 
 # ──────────────────────────────────────────────────
 # PAGE CONFIG & GLOBAL STYLE
@@ -487,7 +495,7 @@ INTRO_STORY_MOTION = {
 INTRO_STORY_COPY = {
     # Replace these messages with your final scrollytelling text later.
     "hero_eyebrow": "Conflict Intelligence Story",
-    "hero_title": "Conflict: never only a battle.",
+    "hero_title": "Conflicts: never only a battle.",
     "hero_body": "It expands into displacement, interrupted services, and harder decisions about where help should go first.",
     "slide_1_eyebrow": "01 / Global Conflict",
     "slide_1_title": "Conflict first appears as scale.",
@@ -852,7 +860,7 @@ def get_country_admin_rows(admin_df, selected_country_name):
 def metric_label(metric):
     return {
         "events":"Events","fatalities":"Fatalities",
-        "population_exposure":"Pop. Exposure","displaced":"Displaced",
+        "population_exposure":"Pop. Exposure","displaced":"Displacement Snapshot",
         "country_priority_score":"Priority Score",
         "country_priority_score_base":"Base Priority Score",
         "health_priority_score":"Health Priority",
@@ -1517,7 +1525,7 @@ def build_intro_story_html(video_uri, image_uris, story_stats):
         <p class="story-body">{escape(copy['slide_3_body'])}</p>
         <div class="story-grid">
           {render_stat_cards([
-              {"label": "Displaced", "value": story_stats["total_displaced"], "copy": "Lives moved by conflict pressure."},
+              {"label": "Total displacement movements", "value": story_stats["total_displaced"], "copy": CUMULATIVE_DISPLACEMENT_NOTE},
               {"label": "Exposure", "value": story_stats["population_exposure"], "copy": "People living inside the pressure field."},
               {"label": "Priority Country", "value": story_stats["priority_country"], "copy": "Latest monthly concentration of need."},
               {"label": "Story Lens", "value": "Human impact", "copy": "This is where conflict becomes lived disruption."},
@@ -2091,6 +2099,559 @@ def render_story_priority_scatter(selected_country_name, boundary_gdf):
           <span style="font-family:'Inter',sans-serif;font-size:12px;color:#7a4418;">
             <strong>Conflict-driven priority:</strong> {names} rank high on priority despite
             relatively lower displacement — driven by conflict intensity and fatalities.
+          </span>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+def render_displacement_snapshot_bubble_story(
+    selected_country_name,
+    boundary_gdf,
+    snapshot_period=None,
+    displacement_mode="latest",
+):
+    cnorm = canonical_country_norm(selected_country_name)
+    disp_in_rows = displacement_dest[displacement_dest["country"] == cnorm].copy()
+    disp_out_rows = displacement_origin[displacement_origin["country"] == cnorm].copy()
+    pri_rows = admin1_priority[admin1_priority["country_norm"] == cnorm].copy()
+
+    if displacement_mode == "peak":
+        disp_agg = get_peak_displacement(disp_in_rows, ["admin1_norm"], "displaced_in")
+        orig_agg = get_peak_displacement(disp_out_rows, ["admin1_norm"], "displaced_from")
+        pri_slice = filter_to_period(pri_rows, get_latest_period(pri_rows))
+        disp_in_hover_label = "Peak displaced in"
+        disp_out_hover_label = "Peak displaced out"
+    else:
+        snapshot_period = (
+            snapshot_period
+            or get_latest_period(disp_in_rows, pri_rows, intersection=True)
+            or get_latest_period(disp_in_rows)
+            or get_latest_period(pri_rows)
+            or get_latest_period(disp_out_rows)
+        )
+        disp_agg, _ = get_latest_displacement_snapshot(
+            disp_in_rows,
+            ["admin1_norm"],
+            "displaced_in",
+            period=snapshot_period,
+        )
+        orig_agg, _ = get_latest_displacement_snapshot(
+            disp_out_rows,
+            ["admin1_norm"],
+            "displaced_from",
+            period=snapshot_period,
+        )
+        pri_slice = filter_to_period(pri_rows, snapshot_period)
+        disp_in_hover_label = "Latest displaced in"
+        disp_out_hover_label = "Displaced out in same month"
+
+    if pri_slice.empty:
+        pri_agg = pd.DataFrame(columns=["admin1_norm"])
+    else:
+        agg_d = {"events": "sum", "fatalities": "sum"}
+        for c in ["priority_score_country", "displaced", "population_exposure"]:
+            if c in pri_slice.columns:
+                agg_d[c] = "mean" if "score" in c else "sum"
+        pri_agg = pri_slice.groupby("admin1_norm", as_index=False).agg(agg_d)
+
+    bdf = disp_agg.merge(orig_agg, how="outer", on="admin1_norm")
+    bdf = bdf.merge(pri_agg, how="outer", on="admin1_norm")
+
+    name_map = {}
+    if boundary_gdf is not None and not boundary_gdf.empty:
+        name_map = dict(zip(boundary_gdf["admin_name_norm"], boundary_gdf["admin_name"]))
+    bdf["display_name"] = bdf["admin1_norm"].map(name_map).fillna(
+        bdf["admin1_norm"].apply(lambda x: str(x).replace("-", " ").title() if pd.notna(x) else "")
+    )
+
+    for col in [
+        "displaced_in",
+        "displaced_from",
+        "events",
+        "fatalities",
+        "priority_score_country",
+        "displaced",
+        "population_exposure",
+    ]:
+        if col not in bdf.columns:
+            bdf[col] = 0.0
+        bdf[col] = pd.to_numeric(bdf[col], errors="coerce").fillna(0.0)
+
+    bdf = bdf[bdf["admin1_norm"].notna() & (bdf["admin1_norm"].astype(str) != "nan")].copy()
+    bdf = bdf.sort_values("displaced_in", ascending=False).reset_index(drop=True)
+
+    if bdf.empty:
+        st.info("No displacement snapshot data available for this country.")
+        return
+
+    max_disp = float(bdf["displaced_in"].max())
+    use_priority = max_disp <= 0
+    size_col = "priority_score_country" if use_priority else "displaced_in"
+    max_v = float(bdf[size_col].max()) or 1.0
+    max_diameter, min_diameter = 90.0, 12.0
+    bdf["px_d"] = bdf[size_col].apply(
+        lambda value: float(max(min_diameter, (max(0.0, value) / max_v) ** 0.5 * max_diameter))
+    )
+
+    n = len(bdf)
+    golden_angle = math.pi * (3.0 - math.sqrt(5.0))
+    spread = max_diameter * 1.65
+    bdf["x"] = [spread * math.sqrt(i) * math.cos(i * golden_angle) for i in range(n)]
+    bdf["y"] = [spread * math.sqrt(i) * math.sin(i * golden_angle) for i in range(n)]
+
+    all_coords = list(bdf["x"]) + list(bdf["y"])
+    axis_r = (max(abs(v) for v in all_coords) + max_diameter + 45) if n > 0 else 300.0
+
+    pri_max = float(max(bdf["priority_score_country"].max(), 0.001))
+    bdf["label"] = bdf.apply(
+        lambda row: str(row["display_name"]).split()[0] if row["px_d"] >= 36 else "",
+        axis=1,
+    )
+
+    leg_vals = [max_v, max_v * 0.30, max_v * 0.08]
+    leg_ds = [float(max(min_diameter, (v / max_v) ** 0.5 * max_diameter)) for v in leg_vals]
+    lx = axis_r * 0.80
+    leg_y = [-axis_r * 0.46, -axis_r * 0.62, -axis_r * 0.73]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=bdf["x"],
+        y=bdf["y"],
+        mode="markers+text",
+        marker=dict(
+            size=bdf["px_d"],
+            sizemode="diameter",
+            color=bdf["priority_score_country"],
+            colorscale=SCALE_BUBBLE,
+            cmin=0.0,
+            cmax=pri_max,
+            line=dict(width=1.5, color="rgba(255,255,255,0.5)"),
+            opacity=0.87,
+            colorbar=dict(
+                title=dict(text="Priority", font=dict(family="Inter", size=11, color="#1b2230")),
+                tickfont=dict(family="Inter", size=9, color="#5a6577"),
+                len=0.42,
+                thickness=10,
+                outlinewidth=0,
+                x=1.01,
+            ),
+        ),
+        text=bdf["label"],
+        textfont=dict(family="Inter", size=9, color="rgba(255,255,255,0.95)"),
+        textposition="middle center",
+        customdata=bdf[[
+            "display_name",
+            "displaced_in",
+            "displaced_from",
+            "priority_score_country",
+            "events",
+            "fatalities",
+        ]].values,
+        hovertemplate=(
+            "<b>%{customdata[0]}</b><br>"
+            f"{disp_in_hover_label}: <b>%{{customdata[1]:,.0f}}</b><br>"
+            f"{disp_out_hover_label}: %{{customdata[2]:,.0f}}<br>"
+            "Priority score: %{customdata[3]:.3f}<br>"
+            "Events: %{customdata[4]:,.0f}  ·  Fatalities: %{customdata[5]:,.0f}"
+            "<extra></extra>"
+        ),
+        showlegend=False,
+        name="",
+    ))
+    fig.add_trace(go.Scatter(
+        x=[lx, lx, lx],
+        y=leg_y,
+        mode="markers",
+        marker=dict(
+            size=leg_ds,
+            sizemode="diameter",
+            color="rgba(175,188,205,0.40)",
+            line=dict(width=1.5, color="#b0b9c7"),
+        ),
+        hoverinfo="skip",
+        showlegend=False,
+    ))
+    fig.add_trace(go.Scatter(
+        x=[axis_r * 0.93, axis_r * 0.93, axis_r * 0.93],
+        y=leg_y,
+        mode="text",
+        text=[fmt_big(v) for v in leg_vals],
+        textfont=dict(family="Inter", size=9, color="#8893a4"),
+        textposition="middle right",
+        hoverinfo="skip",
+        showlegend=False,
+    ))
+
+    fig.update_layout(
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#ffffff",
+        font=dict(family="Inter", color="#5a6577", size=11),
+        xaxis=dict(visible=False, range=[-axis_r, axis_r], fixedrange=True),
+        yaxis=dict(
+            visible=False,
+            range=[-axis_r, axis_r],
+            scaleanchor="x",
+            scaleratio=1,
+            fixedrange=True,
+        ),
+        margin=dict(l=10, r=90, t=10, b=10),
+        height=580,
+        hoverlabel=dict(
+            bgcolor="white",
+            bordercolor="#e4e8ef",
+            font=dict(family="Inter", size=12, color="#1b2230"),
+        ),
+    )
+    st.plotly_chart(fig, use_container_width=True, key=f"bubble_snapshot_{cnorm}")
+
+
+def render_displacement_snapshot_overview(
+    selected_country_name,
+    boundary_gdf,
+    arrivals_snapshot,
+    arrivals_period,
+    departures_snapshot,
+    departures_period,
+    displacement_mode="latest",
+):
+    cnorm = canonical_country_norm(selected_country_name)
+    total_events_full = float(admin_conflict[admin_conflict["country_norm"] == cnorm]["events"].sum())
+    total_fat_full = float(admin_conflict[admin_conflict["country_norm"] == cnorm]["fatalities"].sum())
+
+    total_arrived = float(arrivals_snapshot["displaced_in"].sum()) if not arrivals_snapshot.empty else 0.0
+    total_departed = float(departures_snapshot["displaced_from"].sum()) if not departures_snapshot.empty else 0.0
+    arrivals_label = format_period_label(arrivals_period) or "No snapshot"
+    departures_label = format_period_label(departures_period) or "No snapshot"
+    arrived_display = fmt_big(total_arrived) if not arrivals_snapshot.empty else "—"
+    departed_display = fmt_big(total_departed) if not departures_snapshot.empty else "—"
+
+    if displacement_mode == "peak":
+        title = f"Peak displacement snapshot for {selected_country_name}"
+        lead_copy = (
+            f"Peak displaced-in values are shown by admin1 across the selected range, and displaced-out values use "
+            f"the latest available departure snapshot in <strong style=\"color:#1b2230;\">{departures_label}</strong>."
+        )
+        bar_hover_label = "Peak displaced in"
+    else:
+        title = f"Latest displacement snapshot for {selected_country_name}"
+        lead_copy = (
+            f"Displaced-in values use the latest arrival snapshot in <strong style=\"color:#1b2230;\">{arrivals_label}</strong>, "
+            f"while displaced-out values use the latest departure snapshot in "
+            f"<strong style=\"color:#1b2230;\">{departures_label}</strong>."
+        )
+        bar_hover_label = "Latest displaced in snapshot"
+
+    st.markdown(f"""
+    <div style="padding:20px 0 10px 0;">
+      <p style="font-family:'Playfair Display',serif;font-size:22px;font-weight:600;color:#1b2230;line-height:1.4;margin:0 0 10px 0;">
+        {title}
+      </p>
+      <p style="font-family:'Inter',sans-serif;font-size:14px;color:#5a6577;line-height:1.85;margin:0;max-width:680px;">
+        {lead_copy}
+        Across the cumulative 2024–2026 conflict layer, <strong style="color:#b8703a;">{fmt_big(total_fat_full)}</strong>
+        fatalities were recorded across <strong style="color:#2c4a6e;">{fmt_big(total_events_full)}</strong> events.
+        The chart below ranks admin areas by the current displaced-in snapshot instead of summing every month together.
+      </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown(f"""
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin:10px 0 22px 0;">
+      <div style="background:#e8eef6;border-radius:10px;padding:12px 20px;">
+        <div style="font-family:'Inter',sans-serif;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#5a7aa0;margin-bottom:4px;">Displaced In</div>
+        <div style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#2c4a6e;">{arrived_display}</div>
+        <div style="font-family:'Inter',sans-serif;font-size:11px;color:#5a6577;margin-top:4px;">Latest snapshot · {arrivals_label}</div>
+      </div>
+      <div style="background:#fdf3eb;border-radius:10px;padding:12px 20px;">
+        <div style="font-family:'Inter',sans-serif;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#b8703a;margin-bottom:4px;">Displaced Out</div>
+        <div style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#b8703a;">{departed_display}</div>
+        <div style="font-family:'Inter',sans-serif;font-size:11px;color:#7a4418;margin-top:4px;">Latest snapshot · {departures_label}</div>
+      </div>
+      <div style="background:#eef1f6;border-radius:10px;padding:12px 20px;">
+        <div style="font-family:'Inter',sans-serif;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#5a6577;margin-bottom:4px;">Conflict Events</div>
+        <div style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#1b2230;">{fmt_big(total_events_full)}</div>
+        <div style="font-family:'Inter',sans-serif;font-size:11px;color:#5a6577;margin-top:4px;">2024–2026 cumulative</div>
+      </div>
+      <div style="background:#fdf3eb;border-radius:10px;padding:12px 20px;">
+        <div style="font-family:'Inter',sans-serif;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#b8703a;margin-bottom:4px;">Fatalities</div>
+        <div style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#7a4418;">{fmt_big(total_fat_full)}</div>
+        <div style="font-family:'Inter',sans-serif;font-size:11px;color:#7a4418;margin-top:4px;">2024–2026 cumulative</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if arrivals_snapshot.empty:
+        st.info("No displacement arrival snapshot data available.")
+        return
+
+    disp_agg = arrivals_snapshot.copy()
+    name_map = {}
+    if boundary_gdf is not None and not boundary_gdf.empty:
+        name_map = dict(zip(boundary_gdf["admin_name_norm"], boundary_gdf["admin_name"]))
+    disp_agg["display_name"] = disp_agg["admin1_norm"].map(name_map).fillna(
+        disp_agg["admin1_norm"].apply(lambda x: str(x).replace("-", " ").title())
+    )
+    top = disp_agg.sort_values("displaced_in", ascending=False).head(10)
+
+    bar_colors = [
+        f"rgba(44,74,110,{max(0.35, 1.0 - i*0.07):.2f})" for i in range(len(top))
+    ]
+
+    fig = go.Figure(go.Bar(
+        y=top["display_name"][::-1],
+        x=top["displaced_in"][::-1],
+        orientation="h",
+        marker=dict(color=bar_colors[::-1], line=dict(width=0)),
+        text=[fmt_big(v) for v in top["displaced_in"][::-1]],
+        textposition="inside",
+        textfont=dict(family="Inter", size=11, color="rgba(255,255,255,0.9)"),
+        hovertemplate=f"<b>%{{y}}</b><br>{bar_hover_label}: %{{x:,.0f}}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#ffffff",
+        font=dict(family="Inter", color="#5a6577", size=11),
+        margin=dict(l=10, r=30, t=10, b=30),
+        height=max(280, len(top) * 34),
+        xaxis=dict(
+            showgrid=True,
+            gridcolor="#eef1f6",
+            gridwidth=1,
+            showline=False,
+            zeroline=False,
+            tickfont=dict(family="Inter", size=10),
+        ),
+        yaxis=dict(
+            showgrid=False,
+            showline=False,
+            tickfont=dict(family="Inter", size=11, color="#1b2230"),
+        ),
+        hoverlabel=dict(
+            bgcolor="white",
+            bordercolor="#e4e8ef",
+            font=dict(family="Inter", size=12, color="#1b2230"),
+        ),
+    )
+    st.plotly_chart(fig, use_container_width=True, key=f"story_bar_snapshot_{cnorm}")
+
+
+def render_displacement_snapshot_priority_scatter(
+    selected_country_name,
+    boundary_gdf,
+    snapshot_period=None,
+    displacement_mode="latest",
+):
+    cnorm = canonical_country_norm(selected_country_name)
+    pri_rows = admin1_priority[admin1_priority["country_norm"] == cnorm].copy()
+    disp_in_rows = displacement_dest[displacement_dest["country"] == cnorm].copy()
+
+    if pri_rows.empty:
+        st.info("No priority data available for this country.")
+        return
+
+    if displacement_mode == "peak":
+        disp_agg = get_peak_displacement(disp_in_rows, ["admin1_norm"], "displaced_in")
+        pri_slice = filter_to_period(pri_rows, get_latest_period(pri_rows))
+        period_label = "Peak arrivals across the selected range"
+        displacement_hover_label = "Peak displaced in"
+        xaxis_title = "Peak Displaced Arrivals"
+        yaxis_title = "Latest Priority Score Snapshot"
+    else:
+        snapshot_period = (
+            snapshot_period
+            or get_latest_period(disp_in_rows, pri_rows, intersection=True)
+            or get_latest_period(disp_in_rows)
+            or get_latest_period(pri_rows)
+        )
+        pri_slice = filter_to_period(pri_rows, snapshot_period)
+        disp_agg, _ = get_latest_displacement_snapshot(
+            disp_in_rows,
+            ["admin1_norm"],
+            "displaced_in",
+            period=snapshot_period,
+        )
+        period_text = format_period_label(snapshot_period)
+        period_label = period_text or "the latest available month"
+        displacement_hover_label = "Latest displaced in snapshot"
+        xaxis_title = (
+            f"Displaced Arrivals Snapshot ({period_text})"
+            if period_text else "Displaced Arrivals Snapshot"
+        )
+        yaxis_title = (
+            f"Priority Score Snapshot ({period_text})"
+            if period_text else "Priority Score Snapshot"
+        )
+
+    if pri_slice.empty:
+        st.info("No priority score snapshot is available for this country.")
+        return
+
+    agg_d = {"events": "sum", "fatalities": "sum"}
+    for c in ["priority_score_country", "displaced", "population_exposure"]:
+        if c in pri_slice.columns:
+            agg_d[c] = "mean" if "score" in c else "sum"
+    sdf = pri_slice.groupby("admin1_norm", as_index=False).agg(agg_d)
+    sdf = sdf.merge(disp_agg, how="left", on="admin1_norm")
+
+    name_map = {}
+    if boundary_gdf is not None and not boundary_gdf.empty:
+        name_map = dict(zip(boundary_gdf["admin_name_norm"], boundary_gdf["admin_name"]))
+    sdf["display_name"] = sdf["admin1_norm"].map(name_map).fillna(
+        sdf["admin1_norm"].apply(lambda x: str(x).replace("-", " ").title())
+    )
+
+    for col in ["displaced_in", "fatalities", "priority_score_country", "population_exposure", "events"]:
+        if col not in sdf.columns:
+            sdf[col] = 0.0
+        sdf[col] = pd.to_numeric(sdf[col], errors="coerce").fillna(0.0)
+
+    sdf = sdf[sdf["priority_score_country"] > 0].copy()
+    if sdf.empty:
+        st.info("No priority score data to display.")
+        return
+
+    max_fat = float(sdf["fatalities"].max()) or 1.0
+    max_size, min_size = 55.0, 8.0
+    sdf["bubble_sz"] = sdf["fatalities"].apply(
+        lambda value: float(max(min_size, (max(0, value) / max_fat) ** 0.5 * max_size))
+    )
+
+    top_pri = set(sdf.nlargest(3, "priority_score_country")["admin1_norm"])
+    top_disp = set(sdf.nlargest(3, "displaced_in")["admin1_norm"])
+    highlight = top_pri | top_disp
+    sdf["label"] = sdf.apply(
+        lambda row: row["display_name"] if row["admin1_norm"] in highlight else "",
+        axis=1,
+    )
+
+    max_exp = float(sdf["population_exposure"].max()) or 1.0
+
+    st.markdown(f"""
+    <div style="padding:20px 0 10px 0;">
+      <p style="font-family:'Playfair Display',serif;font-size:22px;font-weight:600;color:#1b2230;line-height:1.4;margin:0 0 10px 0;">
+        Why does priority differ across regions?
+      </p>
+      <p style="font-family:'Inter',sans-serif;font-size:14px;color:#5a6577;line-height:1.85;margin:0;max-width:680px;">
+        This chart uses <strong>the latest shared displacement and priority snapshot in {period_label}</strong>.
+        Regions with fewer arrivals can still rank highest if they also face intense conflict,
+        high fatality rates, or large population exposure. Each circle is one admin area:
+        horizontal position shows displaced arrivals, vertical position shows priority score,
+        circle size scales with fatalities, and color reflects population exposure.
+      </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=sdf["displaced_in"],
+        y=sdf["priority_score_country"],
+        mode="markers+text",
+        marker=dict(
+            size=sdf["bubble_sz"],
+            sizemode="diameter",
+            color=sdf["population_exposure"],
+            colorscale=SCALE_WARM,
+            cmin=0,
+            cmax=max_exp,
+            opacity=0.82,
+            line=dict(width=1.2, color="rgba(255,255,255,0.6)"),
+            colorbar=dict(
+                title=dict(text="Population<br>Exposure", font=dict(family="Inter", size=10, color="#1b2230")),
+                tickfont=dict(family="Inter", size=9, color="#5a6577"),
+                len=0.5,
+                thickness=10,
+                outlinewidth=0,
+                x=1.01,
+            ),
+        ),
+        text=sdf["label"],
+        textfont=dict(family="Inter", size=9, color="#1b2230"),
+        textposition="top center",
+        customdata=sdf[[
+            "display_name",
+            "displaced_in",
+            "fatalities",
+            "priority_score_country",
+            "population_exposure",
+            "events",
+        ]].values,
+        hovertemplate=(
+            "<b>%{customdata[0]}</b><br>"
+            f"{displacement_hover_label}: <b>%{{customdata[1]:,.0f}}</b><br>"
+            "Priority score: <b>%{customdata[3]:.3f}</b><br>"
+            "Fatalities: %{customdata[2]:,.0f}<br>"
+            "Pop. exposure: %{customdata[4]:,.0f}<br>"
+            "Events: %{customdata[5]:,.0f}"
+            "<extra></extra>"
+        ),
+        showlegend=False,
+    ))
+
+    med_x = float(sdf["displaced_in"].median())
+    med_y = float(sdf["priority_score_country"].median())
+    x_max = float(sdf["displaced_in"].max()) * 1.08
+    y_max = float(sdf["priority_score_country"].max()) * 1.12
+
+    for xv, yv, lbl, anchor in [
+        (x_max * 0.55, y_max * 0.97, "HIGH PRIORITY · HIGH DISPLACEMENT", "center"),
+        (x_max * 0.05, y_max * 0.97, "HIGH PRIORITY · LOW DISPLACEMENT", "left"),
+        (x_max * 0.55, y_max * 0.04, "LOW PRIORITY · HIGH DISPLACEMENT", "center"),
+    ]:
+        fig.add_annotation(
+            x=xv,
+            y=yv,
+            text=lbl,
+            showarrow=False,
+            font=dict(family="Inter", size=8, color="#b0b9c7"),
+            xanchor=anchor,
+            yanchor="top",
+        )
+
+    fig.add_shape(type="line", x0=med_x, x1=med_x, y0=0, y1=y_max,
+                  line=dict(color="#e4e8ef", width=1, dash="dot"))
+    fig.add_shape(type="line", x0=0, x1=x_max, y0=med_y, y1=med_y,
+                  line=dict(color="#e4e8ef", width=1, dash="dot"))
+
+    fig.update_layout(
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#ffffff",
+        font=dict(family="Inter", color="#5a6577", size=11),
+        margin=dict(l=50, r=90, t=20, b=50),
+        height=500,
+        xaxis=dict(
+            title=dict(text=xaxis_title, font=dict(family="Inter", size=11, color="#5a6577")),
+            showgrid=True,
+            gridcolor="#f1f4f9",
+            zeroline=False,
+            showline=False,
+            tickfont=dict(family="Inter", size=10),
+        ),
+        yaxis=dict(
+            title=dict(text=yaxis_title, font=dict(family="Inter", size=11, color="#5a6577")),
+            showgrid=True,
+            gridcolor="#f1f4f9",
+            zeroline=False,
+            showline=False,
+            tickfont=dict(family="Inter", size=10),
+        ),
+        hoverlabel=dict(
+            bgcolor="white",
+            bordercolor="#e4e8ef",
+            font=dict(family="Inter", size=12, color="#1b2230"),
+        ),
+    )
+    st.plotly_chart(fig, use_container_width=True, key=f"story_scatter_snapshot_{cnorm}")
+
+    high_pri_low_disp = sdf[
+        (sdf["priority_score_country"] >= med_y) & (sdf["displaced_in"] <= med_x)
+    ].nlargest(3, "priority_score_country")
+    if not high_pri_low_disp.empty:
+        names = ", ".join(high_pri_low_disp["display_name"].tolist())
+        st.markdown(f"""
+        <div style="margin-top:6px;padding:12px 16px;background:#fdf3eb;border-left:3px solid #b8703a;border-radius:0 8px 8px 0;">
+          <span style="font-family:'Inter',sans-serif;font-size:12px;color:#7a4418;">
+            <strong>Conflict-driven priority:</strong> {names} rank high on priority despite
+            relatively lower displacement in the latest snapshot.
           </span>
         </div>
         """, unsafe_allow_html=True)
@@ -2990,9 +3551,9 @@ section.main,
           <div class="story-metric-note">The most visible and immediate human cost of conflict.</div>
         </div>
         <div class="story-metric-card">
-          <div class="story-metric-label">Displaced People</div>
+          <div class="story-metric-label">Total Displacement Movements</div>
           <div class="story-metric-value">{fmt_big(_story_total_disp)}</div>
-          <div class="story-metric-note">Movement that often disrupts shelter, schooling, and treatment.</div>
+          <div class="story-metric-note">{CUMULATIVE_DISPLACEMENT_NOTE}</div>
         </div>
         <div class="story-metric-card">
           <div class="story-metric-label">Population Exposure</div>
@@ -3260,7 +3821,7 @@ div[data-testid="stButton"] > button:hover {
       </div>
       <div class="intro-stat">
         <div class="intro-stat-val">{fmt_big(_total_disp)}</div>
-        <div class="intro-stat-lbl">People Displaced</div>
+        <div class="intro-stat-lbl">Displacement Movements</div>
       </div>
       <div class="intro-stat">
         <div class="intro-stat-val">{_n_ctry}</div>
@@ -3631,9 +4192,9 @@ if st.session_state["view"] == "world":
           </div>
           <div class="kpi-card teal">
             <div class="kpi-accent"></div>
-            <div class="kpi-label">Total Displaced</div>
+            <div class="kpi-label">Displacement Snapshot</div>
             <div class="kpi-value">{fmt_big(total_disp)}</div>
-            <div class="kpi-sub">Displacement events</div>
+            <div class="kpi-sub">Latest snapshot · {selected_month} {selected_year}</div>
           </div>
           <div class="kpi-card gold">
             <div class="kpi-accent"></div>
@@ -4148,9 +4709,9 @@ else:
           </div>
           <div class="kpi-card teal">
             <div class="kpi-accent"></div>
-            <div class="kpi-label">Displaced</div>
+            <div class="kpi-label">Displacement Snapshot</div>
             <div class="kpi-value">{fmt_big(total_disp)}</div>
-            <div class="kpi-sub">Priority layer</div>
+            <div class="kpi-sub">Latest snapshot · {selected_month} {selected_year}</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-accent"></div>
@@ -4226,16 +4787,29 @@ else:
     # DISPLACEMENT STORY — full period 2024–2026
     # ─────────────────────────────────────────────
     cnorm_story = canonical_country_norm(selected_country_name)
-    total_arrived = float(
-        displacement_dest[displacement_dest["country"] == cnorm_story]["displaced_in"].sum()
+    story_displacement_mode = "latest"
+    story_disp_in_rows = displacement_dest[displacement_dest["country"] == cnorm_story].copy()
+    story_disp_out_rows = displacement_origin[displacement_origin["country"] == cnorm_story].copy()
+    story_arrivals_snapshot, story_arrivals_period = get_latest_displacement_snapshot(
+        story_disp_in_rows,
+        ["admin1_norm"],
+        "displaced_in",
     )
-    total_departed = float(
-        displacement_origin[displacement_origin["country"] == cnorm_story]["displaced_from"].sum()
+    story_departures_snapshot, story_departures_period = get_latest_displacement_snapshot(
+        story_disp_out_rows,
+        ["admin1_norm"],
+        "displaced_from",
     )
+    story_snapshot_period = (
+        story_arrivals_period
+        or get_latest_period(country_priority_rows)
+        or story_departures_period
+    )
+    story_snapshot_label = format_period_label(story_snapshot_period) or "the latest available month"
 
     st.markdown(
         '<div class="section-title" style="margin-top:36px;">'
-        '<span class="section-dot"></span>Displacement Story 2024–2026</div>',
+        '<span class="section-dot"></span>Displacement Story - Latest Snapshot</div>',
         unsafe_allow_html=True,
     )
 
@@ -4246,7 +4820,15 @@ else:
     ])
 
     with tab_overview:
-        render_story_overview(selected_country_name, boundary_gdf, total_arrived, total_departed)
+        render_displacement_snapshot_overview(
+            selected_country_name,
+            boundary_gdf,
+            story_arrivals_snapshot,
+            story_arrivals_period,
+            story_departures_snapshot,
+            story_departures_period,
+            displacement_mode=story_displacement_mode,
+        )
 
     with tab_bubbles:
         st.markdown(f"""
@@ -4254,20 +4836,29 @@ else:
           <p style="font-family:'Playfair Display',serif;font-size:22px;font-weight:600;color:#1b2230;line-height:1.4;margin:0 0 10px 0;">
             Where are people moving across {selected_country_name}?
           </p>
-          <p style="font-family:'Inter',sans-serif;font-size:14px;color:#5a6577;line-height:1.85;margin:0 0 4px 0;max-width:640px;">
+          <p style="font-family:'Inter',sans-serif;font-size:14px;color:#5a6577;line-height:1.85;margin:0 0 4px 0;max-width:680px;">
             Each circle represents one admin1 area.
-            <strong>Size</strong> reflects total displaced arrivals 2024–2026.
-            <strong>Color</strong> shows average priority score — darker navy means higher humanitarian priority.
-            The biggest circles absorbed the most people; the darkest faced the most urgent conditions.
+            <strong>Size</strong> reflects displaced arrivals in {story_snapshot_label}.
+            <strong>Color</strong> shows the priority score for the same snapshot where available.
+            Departure values are shown for that same month when data exists, rather than summing all months together.
           </p>
           <p style="font-family:'Inter',sans-serif;font-size:12px;color:#8893a4;line-height:1.6;margin:0;">
-            <strong style="color:#1b2230;">{fmt_big(total_arrived)}</strong> people arrived ·
-            <strong style="color:#1b2230;">{fmt_big(total_departed)}</strong> departed.
-            Hover any circle for the full breakdown.
+            Snapshot month: <strong style="color:#1b2230;">{story_snapshot_label}</strong>.
+            Hover any circle for arrivals, departures, priority, and conflict context.
           </p>
         </div>
         """, unsafe_allow_html=True)
-        render_bubble_story(selected_country_name, boundary_gdf)
+        render_displacement_snapshot_bubble_story(
+            selected_country_name,
+            boundary_gdf,
+            snapshot_period=story_snapshot_period,
+            displacement_mode=story_displacement_mode,
+        )
 
     with tab_priority:
-        render_story_priority_scatter(selected_country_name, boundary_gdf)
+        render_displacement_snapshot_priority_scatter(
+            selected_country_name,
+            boundary_gdf,
+            snapshot_period=story_snapshot_period,
+            displacement_mode=story_displacement_mode,
+        )

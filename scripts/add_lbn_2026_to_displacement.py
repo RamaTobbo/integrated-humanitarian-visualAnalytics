@@ -1,55 +1,110 @@
 from pathlib import Path
+
 import pandas as pd
+
+from lebanon_displacement_fallback import (
+    DISPLACEMENT_ADJUSTED_FLAG_COL,
+    DISPLACEMENT_SOURCE_NOTE_COL,
+    apply_lebanon_displacement_fallback,
+    ensure_displacement_metadata,
+    month_num_to_name,
+    summarize_country_months,
+)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# main file already used by your app
 main_path = BASE_DIR / "data" / "cleaned" / "global" / "displacement_admin1_destination_monthly_2024_2026.csv"
-
-# your new Lebanon 2026 file
 lbn_2026_path = BASE_DIR / "data" / "cleaned" / "global" / "lebanon_displacement_2026_from_events.csv"
 
-main_df = pd.read_csv(main_path)
-lbn_df = pd.read_csv(lbn_2026_path)
 
-# rename columns from your Lebanon file
-lbn_df = lbn_df.rename(columns={
-    "month": "month_num",
-    "displaced_country": "displaced_in"
-})
+def prepare_displacement_frame(df):
+    out = df.copy()
 
-# add month names
-month_name_map = {
-    1: "January", 2: "February", 3: "March", 4: "April",
-    5: "May", 6: "June", 7: "July", 8: "August",
-    9: "September", 10: "October", 11: "November", 12: "December"
-}
-lbn_df["month"] = lbn_df["month_num"].map(month_name_map)
+    if "month_num" not in out.columns and "month" in out.columns:
+        month_lookup = {
+            "january": 1,
+            "february": 2,
+            "march": 3,
+            "april": 4,
+            "may": 5,
+            "june": 6,
+            "july": 7,
+            "august": 8,
+            "september": 9,
+            "october": 10,
+            "november": 11,
+            "december": 12,
+        }
+        out["month_num"] = out["month"].astype(str).str.strip().str.lower().map(month_lookup)
 
-# add country_name column
-lbn_df["country_name"] = "Lebanon"
+    if "month" not in out.columns:
+        out["month"] = pd.to_numeric(out["month_num"], errors="coerce").apply(
+            lambda value: month_num_to_name(value) if pd.notna(value) else None
+        )
 
-# keep same columns as main file
-needed_cols = ["country", "country_name", "year", "month_num", "month", "admin1_norm", "displaced_in"]
+    if "country_name" not in out.columns:
+        out["country_name"] = out["country"].astype(str).str.title()
 
-for col in needed_cols:
+    out["country"] = out["country"].astype(str).str.strip().str.lower()
+    out["country_name"] = out["country_name"].astype(str).str.strip()
+    out["year"] = pd.to_numeric(out["year"], errors="coerce")
+    out["month_num"] = pd.to_numeric(out["month_num"], errors="coerce")
+    out["admin1_norm"] = out["admin1_norm"].astype(str).str.strip().str.lower()
+    out["displaced_in"] = pd.to_numeric(out["displaced_in"], errors="coerce").fillna(0)
+
+    out = ensure_displacement_metadata(out)
+    return out
+
+
+main_df = prepare_displacement_frame(pd.read_csv(main_path))
+lbn_df = prepare_displacement_frame(pd.read_csv(lbn_2026_path))
+
+base_columns = [
+    "country",
+    "country_name",
+    "year",
+    "month_num",
+    "month",
+    "admin1_norm",
+    "displaced_in",
+    DISPLACEMENT_ADJUSTED_FLAG_COL,
+    DISPLACEMENT_SOURCE_NOTE_COL,
+]
+
+for col in base_columns:
+    if col not in main_df.columns:
+        main_df[col] = pd.NA
     if col not in lbn_df.columns:
-        lbn_df[col] = None
+        lbn_df[col] = pd.NA
 
-lbn_df = lbn_df[needed_cols].copy()
+main_df = main_df.loc[
+    ~(
+        main_df["country"].eq("lebanon") &
+        (main_df["year"] == 2026)
+    )
+].copy()
 
-# keep only same columns from main too
-main_df = main_df[needed_cols].copy()
+all_columns = list(dict.fromkeys([*main_df.columns.tolist(), *lbn_df.columns.tolist()]))
+final_df = pd.concat(
+    [main_df.reindex(columns=all_columns), lbn_df.reindex(columns=all_columns)],
+    ignore_index=True,
+)
 
-# remove any old Lebanon 2026 rows first
-main_df = main_df[~((main_df["country"] == "lebanon") & (main_df["year"] == 2026))].copy()
-
-# append the new Lebanon 2026 rows
-final_df = pd.concat([main_df, lbn_df], ignore_index=True)
-
-# save back
+final_df = apply_lebanon_displacement_fallback(final_df, value_col="displaced_in")
+final_df = final_df.sort_values(["country", "year", "month_num", "admin1_norm"]).reset_index(drop=True)
 final_df.to_csv(main_path, index=False)
 
-print("Done.")
-print("Saved to:", main_path)
-print("Lebanon 2026 rows added:", len(lbn_df))
+print("Saved destination displacement file:", main_path)
+print("Lebanon 2026 rows written:", int(
+    (
+        final_df["country"].eq("lebanon") &
+        (final_df["year"] == 2026)
+    ).sum()
+))
+
+summary = summarize_country_months(final_df, country="lebanon", value_col="displaced_in")
+print("\nLebanon February and March 2026 destination totals:")
+if summary.empty:
+    print("No Lebanon February or March 2026 rows found.")
+else:
+    print(summary.to_string(index=False))
