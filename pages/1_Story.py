@@ -457,6 +457,9 @@ displacement_dest_path   = BASE_DIR / "data" / "cleaned" / "global"     / "displ
 displacement_origin_path = BASE_DIR / "data" / "cleaned" / "global"     / "displacement_admin1_origin_monthly_2024_2026.csv"
 country_boundaries_dir   = BASE_DIR / "data" / "cleaned" / "boundaries" / "countries"
 lbn_admin2_fallback_path = BASE_DIR / "data" / "raw"     / "boundaries" / "geoBoundaries-LBN-ADM2.geojson"
+lbn_admin2_clean_path    = BASE_DIR / "data" / "cleaned" / "boundaries" / "lbn_admin2.geojson"
+lbn_admin2_priority_path = BASE_DIR / "data" / "cleaned" / "lebanon"    / "lebanon_priority_admin2_enhanced.csv"
+lbn_admin2_conflict_path = BASE_DIR / "data" / "cleaned" / "global"     / "conflict_standardized_monthlybytype.csv"
 
 # ──────────────────────────────────────────────────
 # INTRO STORY CONFIG
@@ -847,6 +850,119 @@ def resolve_clicked_country(clicked_id=None, clicked_name=None, fallback_name=No
         resolved_name = str(world_match["country_name_geo"].iloc[0]).strip()
 
     return iso3, resolved_name
+
+def extract_selected_map_location(event):
+    if event is None:
+        return None
+    try:
+        if isinstance(event, dict):
+            points = event.get("selection", {}).get("points", [])
+        else:
+            sel = getattr(event, "selection", {})
+            points = sel.get("points", []) if isinstance(sel, dict) else []
+    except Exception:
+        return None
+    if not points:
+        return None
+    point = points[0]
+    location = point.get("location")
+    if location:
+        return str(location).strip()
+    custom = point.get("customdata", [])
+    if custom:
+        return str(custom[0]).strip()
+    return None
+
+def standardize_lebanon_admin2_name(value):
+    value = normalize_text(value)
+    if value is None:
+        return None
+    mapping = {
+        "akkar": "akkar",
+        "al batroun": "batroun",
+        "batroun": "batroun",
+        "aley": "aley",
+        "baabda": "baabda",
+        "baalbek": "baalbek",
+        "beirut": "beirut",
+        "bcharre": "bcharre",
+        "bsharri": "bcharre",
+        "bint jbeil": "bent jbail",
+        "bent jbeil": "bent jbail",
+        "chouf": "chouf",
+        "el hermel": "hermel",
+        "al hermel": "hermel",
+        "hermel": "hermel",
+        "el koura": "koura",
+        "al kura": "koura",
+        "koura": "koura",
+        "el meten": "el metn",
+        "el metn": "el metn",
+        "al matn": "el metn",
+        "matn": "el metn",
+        "hasbaya": "hasbeiya",
+        "hasbeiya": "hasbeiya",
+        "jbail": "jbail",
+        "jubayl": "jbail",
+        "jezzine": "jezzine",
+        "keserwan": "kesrouan",
+        "kesrwane": "kesrouan",
+        "kesrouan": "kesrouan",
+        "marjayoun": "marjaayoun",
+        "marjaayoun": "marjaayoun",
+        "al miniyeh al danniyeh": "al miniyeh al danniyeh",
+        "minieh danniyeh": "al miniyeh al danniyeh",
+        "al miniyeh-danniyeh": "al miniyeh al danniyeh",
+        "nabatieh": "nabatiye",
+        "al nabatieh": "nabatiye",
+        "nabatiye": "nabatiye",
+        "rachaya": "rachaya",
+        "rashaya": "rachaya",
+        "rashayya": "rachaya",
+        "saida": "saida",
+        "sayda": "saida",
+        "sidon": "saida",
+        "sour": "sour",
+        "tyr": "sour",
+        "tyre": "sour",
+        "tripoli": "tripoli",
+        "west bekaa": "west bekaa",
+        "zahle": "zahle",
+        "zgharta": "zgharta",
+    }
+    return mapping.get(value, value)
+
+def format_lebanon_admin2_label(value):
+    normalized = standardize_lebanon_admin2_name(value)
+    label_map = {
+        "akkar": "Akkar",
+        "al miniyeh al danniyeh": "Al Miniyeh-Danniyeh",
+        "aley": "Aley",
+        "baabda": "Baabda",
+        "baalbek": "Baalbek",
+        "batroun": "Batroun",
+        "bcharre": "Bcharre",
+        "beirut": "Beirut",
+        "bent jbail": "Bent Jbeil",
+        "chouf": "Chouf",
+        "el metn": "El Metn",
+        "hasbeiya": "Hasbeiya",
+        "hermel": "Hermel",
+        "jbail": "Jbeil",
+        "jezzine": "Jezzine",
+        "kesrouan": "Kesrouan",
+        "koura": "Koura",
+        "marjaayoun": "Marjaayoun",
+        "nabatiye": "Nabatiye",
+        "rachaya": "Rachaya",
+        "saida": "Saida",
+        "sour": "Sour",
+        "tripoli": "Tripoli",
+        "west bekaa": "West Bekaa",
+        "zahle": "Zahle",
+        "zgharta": "Zgharta",
+    }
+    return label_map.get(normalized, str(value).strip().title() if value is not None else "")
 
 def get_country_admin_rows(admin_df, selected_country_name):
     country_norm = canonical_country_norm(selected_country_name)
@@ -2906,6 +3022,285 @@ def load_country_admin1_boundary(iso3):
 
     return None, None
 
+@st.cache_data(show_spinner=False)
+def load_lebanon_admin2_boundary():
+    if lbn_admin2_clean_path.exists():
+        gdf = gpd.read_file(lbn_admin2_clean_path)
+        if gdf.crs is None:
+            gdf = gdf.set_crs(epsg=4326)
+        else:
+            gdf = gdf.to_crs(epsg=4326)
+        gdf = repair_geometries(gdf)
+        gdf["admin1_name"] = gdf["adm1_name"].astype(str).str.strip()
+        gdf["admin2_name"] = gdf["adm2_name"].astype(str).str.strip()
+        gdf["admin1_norm"] = gdf["admin1_name"].apply(lambda value: standardize_admin_name(value, "Lebanon"))
+        gdf["admin2_norm"] = gdf["admin2_name"].apply(standardize_lebanon_admin2_name)
+        gdf = gdf[gdf["admin1_norm"].notna() & gdf["admin2_norm"].notna()].copy()
+        gdf["admin2_label"] = gdf["admin2_norm"].apply(format_lebanon_admin2_label)
+        gdf = gdf[["admin1_name", "admin1_norm", "admin2_name", "admin2_label", "admin2_norm", "geometry"]].copy()
+        return gdf
+
+    if lbn_admin2_fallback_path.exists():
+        gdf = gpd.read_file(lbn_admin2_fallback_path)
+        if gdf.crs is None:
+            gdf = gdf.set_crs(epsg=4326)
+        else:
+            gdf = gdf.to_crs(epsg=4326)
+        gdf = repair_geometries(gdf)
+        gdf["admin2_name"] = gdf["shapeName"].astype(str).str.strip()
+        gdf["admin2_norm"] = gdf["admin2_name"].apply(standardize_lebanon_admin2_name)
+        gdf["admin1_name"] = gdf["shapeName"].map(DISTRICT_TO_ADMIN1_GEO)
+        gdf["admin1_norm"] = gdf["admin1_name"].apply(lambda value: standardize_admin_name(value, "Lebanon"))
+        gdf = gdf[gdf["admin1_norm"].notna() & gdf["admin2_norm"].notna()].copy()
+        gdf["admin2_label"] = gdf["admin2_norm"].apply(format_lebanon_admin2_label)
+        gdf = gdf[["admin1_name", "admin1_norm", "admin2_name", "admin2_label", "admin2_norm", "geometry"]].copy()
+        return gdf
+
+    return gpd.GeoDataFrame(columns=["admin1_name", "admin1_norm", "admin2_name", "admin2_label", "admin2_norm", "geometry"], geometry="geometry", crs="EPSG:4326")
+
+@st.cache_data(show_spinner=False)
+def load_lebanon_admin2_conflict():
+    if not lbn_admin2_conflict_path.exists():
+        return pd.DataFrame(
+            columns=[
+                "country", "admin1", "admin2", "year", "month_num", "month",
+                "event_type", "events", "fatalities", "population_exposure",
+                "admin1_norm", "admin2_norm",
+            ]
+        )
+    df = pd.read_csv(lbn_admin2_conflict_path)
+    for col in ["country", "admin1", "admin2", "month", "event_type"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+    for col in ["year", "month_num", "events", "fatalities", "population_exposure"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    if "population_exposure" not in df.columns:
+        df["population_exposure"] = 0
+    df["country"] = df["country"].astype(str).str.strip().str.lower()
+    df = df[df["country"].eq("lebanon")].copy()
+    df["admin1_norm"] = df["admin1"].apply(lambda value: standardize_admin_name(value, "Lebanon"))
+    df["admin2_norm"] = df["admin2"].apply(standardize_lebanon_admin2_name)
+    df["year"] = df["year"].fillna(0).astype(int)
+    df["month_num"] = df["month_num"].fillna(0).astype(int)
+    df["events"] = df["events"].fillna(0)
+    df["fatalities"] = df["fatalities"].fillna(0)
+    df["population_exposure"] = df["population_exposure"].fillna(0)
+    df = df[
+        df["admin1_norm"].notna() &
+        df["admin2_norm"].notna() &
+        df["year"].between(MIN_YEAR, MAX_YEAR)
+    ].copy()
+    return df
+
+@st.cache_data(show_spinner=False)
+def load_lebanon_admin2_priority():
+    if not lbn_admin2_priority_path.exists():
+        return pd.DataFrame(
+            columns=[
+                "admin2_norm", "year", "month_num", "month", "events", "fatalities",
+                "priority_score", "priority_rank", "access_risk", "demographic_vulnerability",
+                "admin1_norm",
+            ]
+        )
+    df = pd.read_csv(lbn_admin2_priority_path)
+    for col in ["admin2_norm", "month"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+    numeric_cols = [
+        "year", "month_num", "events", "fatalities", "priority_score", "priority_rank",
+        "access_risk", "demographic_vulnerability",
+    ]
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["admin2_norm"] = df["admin2_norm"].apply(standardize_lebanon_admin2_name)
+    boundary = load_lebanon_admin2_boundary()[["admin1_norm", "admin2_norm"]].drop_duplicates()
+    df = df.merge(boundary, on="admin2_norm", how="left")
+    df["year"] = df["year"].fillna(0).astype(int)
+    df["month_num"] = df["month_num"].fillna(0).astype(int)
+    df = df[
+        df["admin1_norm"].notna() &
+        df["admin2_norm"].notna() &
+        df["year"].between(MIN_YEAR, MAX_YEAR)
+    ].copy()
+    return df
+
+def render_lebanon_admin2_drilldown(
+    selected_admin1_norm,
+    selected_year,
+    selected_month,
+    country_mode,
+    selected_metric,
+    selected_event_type=None,
+):
+    if not selected_admin1_norm:
+        return
+
+    boundary = load_lebanon_admin2_boundary()
+    admin2_boundary = boundary[boundary["admin1_norm"] == selected_admin1_norm].copy()
+    if admin2_boundary.empty:
+        return
+
+    selected_admin1_label = admin2_boundary["admin1_name"].astype(str).str.strip().iloc[0]
+    header_col, action_col = st.columns([5, 1])
+    with header_col:
+        st.markdown(
+            f'<div class="section-title"><span class="section-dot"></span>{selected_admin1_label} Admin2 Detail</div>',
+            unsafe_allow_html=True,
+        )
+    with action_col:
+        if st.button("Back to Admin1", key=f"clear_admin2_{country_mode.lower()}"):
+            st.session_state["country_admin1_drilldown"] = None
+            st.rerun()
+
+    if country_mode == "Conflict":
+        detail_rows = load_lebanon_admin2_conflict()
+        detail_rows = detail_rows[
+            (detail_rows["admin1_norm"] == selected_admin1_norm) &
+            (detail_rows["year"] == selected_year) &
+            (detail_rows["month"].str.lower() == str(selected_month).lower())
+        ].copy()
+        detail_rows = filter_event_type(detail_rows, selected_event_type or "All")
+        detail_metric = selected_metric if selected_metric in {"events", "fatalities", "population_exposure"} else "events"
+        agg = (
+            detail_rows.groupby("admin2_norm", as_index=False)
+            .agg({
+                "events": "sum",
+                "fatalities": "sum",
+                "population_exposure": "sum",
+            })
+            if not detail_rows.empty
+            else pd.DataFrame(columns=["admin2_norm", "events", "fatalities", "population_exposure"])
+        )
+        merged = admin2_boundary.merge(agg, on="admin2_norm", how="left")
+        for col in ["events", "fatalities", "population_exposure"]:
+            merged[col] = pd.to_numeric(merged.get(col, 0), errors="coerce").fillna(0)
+
+        if detail_rows.empty:
+            st.info(
+                f"Lebanon admin2 conflict metrics are not available for {selected_month} {selected_year}. "
+                f"Showing the districts inside {selected_admin1_label}."
+            )
+
+        cscale = SCALE_BLUE if detail_metric == "events" else SCALE_WARM if detail_metric == "fatalities" else SCALE_GOLD
+        fig = px.choropleth_mapbox(
+            merged,
+            geojson=json.loads(merged.to_json()),
+            locations="admin2_norm",
+            featureidkey="properties.admin2_norm",
+            color=detail_metric,
+            color_continuous_scale=cscale,
+            hover_name="admin2_label",
+            hover_data={
+                "events": True,
+                "fatalities": True,
+                "population_exposure": True,
+                "admin2_norm": False,
+            },
+            mapbox_style="carto-positron",
+            center=build_mapbox_center(merged),
+            zoom=build_mapbox_zoom(merged, base_zoom=6.6, max_zoom=9.8),
+            opacity=0.9,
+            title=f"{selected_admin1_label} â€” {metric_label(detail_metric)} by Admin2",
+        )
+        fig.update_layout(**LIGHT_LAYOUT, height=620)
+        st.plotly_chart(fig, use_container_width=True, key=f"lbn_admin2_conflict_{selected_admin1_norm}")
+
+        detail_table = (
+            merged[["admin2_label", "events", "fatalities", "population_exposure"]]
+            .sort_values(detail_metric, ascending=False)
+            .rename(columns={
+                "admin2_label": "Admin2",
+                "events": "Events",
+                "fatalities": "Fatalities",
+                "population_exposure": "Population Exposure",
+            })
+            .reset_index(drop=True)
+        )
+        st.dataframe(detail_table, use_container_width=True, hide_index=True)
+        return
+
+    detail_rows = load_lebanon_admin2_priority()
+    detail_rows = detail_rows[
+        (detail_rows["admin1_norm"] == selected_admin1_norm) &
+        (detail_rows["year"] == selected_year) &
+        (detail_rows["month"].str.lower() == str(selected_month).lower())
+    ].copy()
+    detail_metric = selected_metric if selected_metric in {"events", "fatalities"} else "priority_score"
+    merged = admin2_boundary.merge(detail_rows, on="admin2_norm", how="left")
+    for col in ["events", "fatalities", "priority_score", "priority_rank", "access_risk", "demographic_vulnerability"]:
+        merged[col] = pd.to_numeric(merged.get(col, 0), errors="coerce").fillna(0)
+
+    if detail_rows.empty:
+        st.info(
+            f"Lebanon admin2 priority metrics are not available for {selected_month} {selected_year}. "
+            f"Showing the districts inside {selected_admin1_label}."
+        )
+
+    if detail_metric == "priority_score":
+        cscale = SCALE_BLUE
+    elif detail_metric == "fatalities":
+        cscale = SCALE_WARM
+    else:
+        cscale = SCALE_TEAL
+
+    fig = px.choropleth_mapbox(
+        merged,
+        geojson=json.loads(merged.to_json()),
+        locations="admin2_norm",
+        featureidkey="properties.admin2_norm",
+        color=detail_metric,
+        color_continuous_scale=cscale,
+        hover_name="admin2_label",
+        hover_data={
+            "priority_score": ":.3f",
+            "priority_rank": True,
+            "events": True,
+            "fatalities": True,
+            "access_risk": ":.3f",
+            "demographic_vulnerability": ":.3f",
+            "admin2_norm": False,
+        },
+        mapbox_style="carto-positron",
+        center=build_mapbox_center(merged),
+        zoom=build_mapbox_zoom(merged, base_zoom=6.6, max_zoom=9.8),
+        opacity=0.9,
+        title=f"{selected_admin1_label} â€” {'Priority Score' if detail_metric == 'priority_score' else metric_label(detail_metric)} by Admin2",
+    )
+    fig.update_layout(**LIGHT_LAYOUT, height=620)
+    st.plotly_chart(fig, use_container_width=True, key=f"lbn_admin2_priority_{selected_admin1_norm}")
+
+    detail_table = (
+        merged[
+            [
+                "admin2_label",
+                "priority_score",
+                "priority_rank",
+                "events",
+                "fatalities",
+                "access_risk",
+                "demographic_vulnerability",
+            ]
+        ]
+        .sort_values(detail_metric, ascending=False)
+        .rename(columns={
+            "admin2_label": "Admin2",
+            "priority_score": "Priority Score",
+            "priority_rank": "Priority Rank",
+            "events": "Events",
+            "fatalities": "Fatalities",
+            "access_risk": "Access Risk",
+            "demographic_vulnerability": "Demographic Vulnerability",
+        })
+        .reset_index(drop=True)
+    )
+    detail_table["Priority Score"] = detail_table["Priority Score"].map(lambda value: f"{float(value):.3f}")
+    detail_table["Access Risk"] = detail_table["Access Risk"].map(lambda value: f"{float(value):.3f}")
+    detail_table["Demographic Vulnerability"] = detail_table["Demographic Vulnerability"].map(lambda value: f"{float(value):.3f}")
+    detail_table["Priority Rank"] = detail_table["Priority Rank"].map(lambda value: "â€”" if float(value) <= 0 else str(int(round(float(value)))))
+    st.dataframe(detail_table, use_container_width=True, hide_index=True)
+
 # ──────────────────────────────────────────────────
 # LOAD DATA
 # ──────────────────────────────────────────────────
@@ -2934,6 +3329,7 @@ defaults = [
     ("country_month",None),
     ("country_event_type","All"),
     ("country_metric","events"),
+    ("country_admin1_drilldown", None),
     ("show_intro", True),
 ]
 for key, default in defaults:
@@ -4384,6 +4780,7 @@ if st.session_state["view"] == "world":
 else:
     selected_iso3 = st.session_state["selected_iso3"]
     selected_country_name = st.session_state["selected_country_name"]
+    selected_country_norm = canonical_country_norm(selected_country_name)
 
     if not selected_iso3 or not selected_country_name:
         st.session_state.update({
@@ -4393,6 +4790,9 @@ else:
             "selected_country_name": None,
         })
         st.rerun()
+
+    if selected_country_norm != "lebanon":
+        st.session_state["country_admin1_drilldown"] = None
 
     st.sidebar.markdown('<div class="sidebar-section">Navigation</div>', unsafe_allow_html=True)
     if st.sidebar.button("← Back to World Map"):
@@ -4644,7 +5044,21 @@ else:
                 title_font=dict(family="Inter", size=11, color="#1b2230"),
             )
         )
-        st.plotly_chart(fig, use_container_width=True, key="country_conflict_map")
+        if selected_country_norm == "lebanon":
+            event = st.plotly_chart(
+                fig,
+                use_container_width=True,
+                on_select="rerun",
+                selection_mode=("points",),
+                key="country_conflict_map",
+            )
+            clicked_admin1 = extract_selected_map_location(event)
+            if clicked_admin1 and clicked_admin1 != st.session_state.get("country_admin1_drilldown"):
+                st.session_state["country_admin1_drilldown"] = clicked_admin1
+                st.rerun()
+            st.caption("Lebanon only: click an admin1 area on the map to open its admin2 districts.")
+        else:
+            st.plotly_chart(fig, use_container_width=True, key="country_conflict_map")
 
         st.markdown(
             f'<div class="section-title"><span class="section-dot"></span>Top Admin1 by {metric_label(selected_metric)}</div>',
@@ -4663,6 +5077,16 @@ else:
                 st.info(f"No admin areas with {metric_label(selected_metric).lower()} above 0 for this period.")
         else:
             render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_big)
+
+        if selected_country_norm == "lebanon":
+            render_lebanon_admin2_drilldown(
+                st.session_state.get("country_admin1_drilldown"),
+                selected_year,
+                selected_month,
+                country_mode="Conflict",
+                selected_metric=selected_metric,
+                selected_event_type=selected_event_type,
+            )
 
     else:
         selected_metric = st.sidebar.selectbox(
@@ -4808,7 +5232,21 @@ else:
                 title_font=dict(family="Inter", size=11, color="#1b2230"),
             )
         )
-        st.plotly_chart(fig, use_container_width=True, key="country_priority_map")
+        if selected_country_norm == "lebanon":
+            event = st.plotly_chart(
+                fig,
+                use_container_width=True,
+                on_select="rerun",
+                selection_mode=("points",),
+                key="country_priority_map",
+            )
+            clicked_admin1 = extract_selected_map_location(event)
+            if clicked_admin1 and clicked_admin1 != st.session_state.get("country_admin1_drilldown"):
+                st.session_state["country_admin1_drilldown"] = clicked_admin1
+                st.rerun()
+            st.caption("Lebanon only: click an admin1 area on the map to open its admin2 districts.")
+        else:
+            st.plotly_chart(fig, use_container_width=True, key="country_priority_map")
 
         st.markdown(
             f'<div class="section-title"><span class="section-dot"></span>Top Admin1 by {metric_label(selected_metric)}</div>',
@@ -4824,6 +5262,15 @@ else:
             st.info(f"No admin areas with {metric_label(selected_metric).lower()} above 0 for this period.")
         else:
             render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_fn)
+
+        if selected_country_norm == "lebanon":
+            render_lebanon_admin2_drilldown(
+                st.session_state.get("country_admin1_drilldown"),
+                selected_year,
+                selected_month,
+                country_mode="Priority",
+                selected_metric=selected_metric,
+            )
 
     # ─────────────────────────────────────────────
     # DISPLACEMENT STORY — full period 2024–2026
