@@ -5123,6 +5123,24 @@ world               = load_world()
 
 _priority_metrics = ["events", "fatalities", "population_exposure", "displaced", "displaced_in"]
 _priority_keys = ["country_norm", "year", "month_num", "month"]
+_priority_score_cols = [
+    "priority_score_country",
+    "priority_rank_country",
+    "priority_class_country",
+    "priority_score_global",
+    "priority_rank_global",
+    "priority_class_global",
+]
+_admin1_priority_score_lookup = admin1_priority[
+    [
+        col for col in [
+            *_priority_keys,
+            "admin1_norm",
+            *_priority_score_cols,
+        ]
+        if col in admin1_priority.columns
+    ]
+].drop_duplicates(subset=[col for col in [*_priority_keys, "admin1_norm"] if col in admin1_priority.columns])
 admin1_priority = hierarchy.reconcile_admin1_with_country_totals(
     admin1_priority,
     country_priority,
@@ -5131,6 +5149,32 @@ admin1_priority = hierarchy.reconcile_admin1_with_country_totals(
     admin1_col="admin1_norm",
     admin1_label_col=None,
 )
+if not _admin1_priority_score_lookup.empty:
+    _score_merge_keys = [col for col in [*_priority_keys, "admin1_norm"] if col in admin1_priority.columns and col in _admin1_priority_score_lookup.columns]
+    _score_keep_cols = _score_merge_keys + [
+        col for col in _priority_score_cols
+        if col in _admin1_priority_score_lookup.columns
+    ]
+    admin1_priority = admin1_priority.merge(
+        _admin1_priority_score_lookup[_score_keep_cols],
+        on=_score_merge_keys,
+        how="left",
+        suffixes=("", "_raw"),
+    )
+    for _score_col in _priority_score_cols:
+        _raw_col = f"{_score_col}_raw"
+        if _raw_col not in admin1_priority.columns:
+            continue
+        if _score_col in admin1_priority.columns:
+            if pd.api.types.is_numeric_dtype(admin1_priority[_raw_col]):
+                admin1_priority[_score_col] = pd.to_numeric(admin1_priority[_score_col], errors="coerce").fillna(
+                    pd.to_numeric(admin1_priority[_raw_col], errors="coerce")
+                )
+            else:
+                admin1_priority[_score_col] = admin1_priority[_score_col].fillna(admin1_priority[_raw_col])
+        else:
+            admin1_priority[_score_col] = admin1_priority[_raw_col]
+        admin1_priority = admin1_priority.drop(columns=[_raw_col])
 _country_priority_raw = hierarchy.aggregate_country_from_admin1(
     admin1_priority,
     key_cols=_priority_keys,
