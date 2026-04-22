@@ -29,6 +29,7 @@ from displacement_snapshot_utils import (
     get_latest_displacement_snapshot,
     get_latest_period,
     get_peak_displacement,
+    resolve_displacement_period,
 )
 
 # ──────────────────────────────────────────────────
@@ -459,6 +460,7 @@ displacement_origin_path = BASE_DIR / "data" / "cleaned" / "global"     / "displ
 country_boundaries_dir   = BASE_DIR / "data" / "cleaned" / "boundaries" / "countries"
 lbn_admin2_fallback_path = BASE_DIR / "data" / "raw"     / "boundaries" / "geoBoundaries-LBN-ADM2.geojson"
 lbn_admin2_clean_path    = BASE_DIR / "data" / "cleaned" / "boundaries" / "lbn_admin2.geojson"
+lbn_admin1_priority_path = BASE_DIR / "data" / "cleaned" / "lebanon"    / "lebanon_priority_admin1_enhanced.csv"
 lbn_admin2_priority_path = BASE_DIR / "data" / "cleaned" / "lebanon"    / "lebanon_priority_admin2_enhanced.csv"
 lbn_admin2_conflict_path = BASE_DIR / "data" / "cleaned" / "global"     / "conflict_standardized_monthlybytype.csv"
 global_admin2_path       = BASE_DIR / "data" / "raw"     / "boundaries" / "geoBoundariesCGAZ_ADM2.geojson"
@@ -1153,14 +1155,69 @@ def get_country_admin_rows(admin_df, selected_country_name):
 def metric_label(metric):
     return {
         "events":"Events","fatalities":"Fatalities",
-        "population_exposure":"Pop. Exposure","displaced":"Displacement Snapshot",
-        "country_priority_score":"Priority Score",
-        "country_priority_score_base":"Base Priority Score",
+        "population_exposure":"Pop. Exposure","displaced":"Displacement Priority",
+        "displaced_in":"Displacement Priority",
+        "country_priority_score":"Conflict Priority",
+        "country_priority_score_base":"Conflict Priority",
         "health_priority_score":"Health Priority",
         "education_priority_score":"Education Priority",
-        "priority_score_country":"Priority Score",
+        "priority_score_country":"Conflict Priority",
         "priority_score_global":"Priority Score (Global)",
     }.get(metric, metric)
+
+PRIORITY_MODE_OPTIONS = [
+    "Conflict Priority",
+    "Displacement Priority",
+    "Health Priority",
+    "Education Priority",
+]
+
+WORLD_PRIORITY_MODE_TO_METRIC = {
+    "Conflict Priority": "country_priority_score",
+    "Displacement Priority": "displaced",
+    "Health Priority": "health_priority_score",
+    "Education Priority": "education_priority_score",
+}
+
+COUNTRY_PRIORITY_MODE_TO_METRIC = {
+    "Conflict Priority": "priority_score_country",
+    "Displacement Priority": "displaced",
+    "Health Priority": "health_priority_score",
+    "Education Priority": "education_priority_score",
+}
+
+SERVICE_PRIORITY_STORY = {
+    "Health Priority": {
+        "service": "Health",
+        "score_col": "health_priority_score",
+        "source_year_col": "health_source_year",
+        "indicator_count_col": "health_indicator_count",
+        "tone": "#5a8a82",
+        "soft_bg": "#e2eeec",
+        "title": "Health priority rises where conflict meets limited care access.",
+        "body": (
+            "Conflict pressure becomes more severe when people are far from hospitals, "
+            "primary care, or other essential services. Areas with higher violence and "
+            "weaker health access receive a stronger health-priority signal because the "
+            "same shock is harder to absorb."
+        ),
+    },
+    "Education Priority": {
+        "service": "Education",
+        "score_col": "education_priority_score",
+        "source_year_col": "education_source_year",
+        "indicator_count_col": "education_indicator_count",
+        "tone": "#a8864a",
+        "soft_bg": "#f2ead8",
+        "title": "Education priority shows where conflict interrupts learning most sharply.",
+        "body": (
+            "Education vulnerability is not only about school access in normal times. "
+            "It grows when conflict pressure, exposed populations, and weaker learning "
+            "access overlap, because children have fewer safe and reliable ways to stay "
+            "connected to classrooms."
+        ),
+    },
+}
 
 def fmt_big(n):
     try:
@@ -2414,12 +2471,11 @@ def render_displacement_snapshot_bubble_story(
         pri_slice = filter_to_period(pri_rows, get_latest_period(pri_rows))
         disp_in_hover_label = "Peak displaced"
     else:
-        snapshot_period = (
-            snapshot_period
-            or get_latest_period(disp_in_rows, pri_rows, intersection=True)
-            or get_latest_period(disp_in_rows)
-            or get_latest_period(pri_rows)
-        )
+        # Same snapshot resolution as the dashboard: displacement stock chooses the period.
+        if snapshot_period is None:
+            snapshot_period, _, _ = resolve_displacement_period(
+                disp_in_rows, None, pri_rows
+            )
         disp_agg, _ = get_latest_displacement_snapshot(
             disp_in_rows,
             ["admin1_norm"],
@@ -2427,15 +2483,18 @@ def render_displacement_snapshot_bubble_story(
             period=snapshot_period,
         )
         pri_slice = filter_to_period(pri_rows, snapshot_period)
-        disp_in_hover_label = "Displaced"
+        snap_label = format_period_label(snapshot_period)
+        disp_in_hover_label = f"Displaced - {snap_label}" if snap_label else "Displaced (snapshot)"
 
     if pri_slice.empty:
         pri_agg = pd.DataFrame(columns=["admin1_norm"])
     else:
         agg_d = {"events": "sum", "fatalities": "sum"}
-        for c in ["priority_score_country", "displaced", "population_exposure"]:
+        for c in ["displaced", "population_exposure"]:
             if c in pri_slice.columns:
-                agg_d[c] = "mean" if "score" in c else "sum"
+                agg_d[c] = "sum"
+        if "priority_score_country" in pri_slice.columns:
+            agg_d["priority_score_country"] = "first"
         pri_agg = pri_slice.groupby("admin1_norm", as_index=False).agg(agg_d)
 
     bdf = disp_agg.merge(pri_agg, how="outer", on="admin1_norm")
@@ -2525,15 +2584,14 @@ def render_displacement_snapshot_bubble_story(
             "display_name",
             "displaced_in",
             "priority_score_country",
-            "priority_score_country",
             "events",
             "fatalities",
         ]].values,
         hovertemplate=(
             "<b>%{customdata[0]}</b><br>"
             f"{disp_in_hover_label}: <b>%{{customdata[1]:,.0f}}</b><br>"
-            "Priority score: %{customdata[3]:.3f}<br>"
-            "Events: %{customdata[4]:,.0f}  ·  Fatalities: %{customdata[5]:,.0f}"
+            "Priority score: %{customdata[2]:.3f}<br>"
+            "Events: %{customdata[3]:,.0f}  -  Fatalities: %{customdata[4]:,.0f}"
             "<extra></extra>"
         ),
         showlegend=False,
@@ -3055,6 +3113,659 @@ def render_displacement_snapshot_priority_scatter(
         """, unsafe_allow_html=True)
 
 
+def _priority_period_slice(frame, selected_year, selected_month):
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    month_num = MONTH_MAP.get(
+        str(selected_month).strip(),
+        int(selected_month) if str(selected_month).isdigit() else None,
+    )
+    work = frame.copy()
+    work["year"] = pd.to_numeric(work["year"], errors="coerce")
+    if month_num is not None and "month_num" in work.columns:
+        work["month_num"] = pd.to_numeric(work["month_num"], errors="coerce")
+        return work[
+            (work["year"] == int(selected_year)) &
+            (work["month_num"] == int(month_num))
+        ].copy()
+    return work[
+        (work["year"] == int(selected_year)) &
+        (work["month"].astype(str).str.lower() == str(selected_month).lower())
+    ].copy()
+
+
+def _render_priority_story_bar(chart_df, name_col, value_col, title, tone="#2c4a6e", highlight_col=None):
+    if chart_df.empty or value_col not in chart_df.columns:
+        st.info("No priority data is available for this story view.")
+        return
+
+    chart_df = chart_df.copy()
+    chart_df[value_col] = pd.to_numeric(chart_df[value_col], errors="coerce").fillna(0)
+    chart_df = chart_df[chart_df[value_col] > 0].sort_values(value_col, ascending=False)
+    if chart_df.empty:
+        st.info("No priority values above 0 are available for this story view.")
+        return
+
+    chart_df = chart_df.head(11).sort_values(value_col, ascending=True)
+    colors = [tone] * len(chart_df)
+    if highlight_col and highlight_col in chart_df.columns:
+        colors = [
+            tone if bool(value) else "rgba(143,167,201,0.55)"
+            for value in chart_df[highlight_col].tolist()
+        ]
+
+    fig = go.Figure(go.Bar(
+        y=chart_df[name_col],
+        x=chart_df[value_col],
+        orientation="h",
+        marker=dict(color=colors, line=dict(width=0)),
+        text=[f"{float(v):.3f}" for v in chart_df[value_col]],
+        textposition="inside",
+        textfont=dict(family="Inter", size=11, color="rgba(255,255,255,0.92)"),
+        hovertemplate="<b>%{y}</b><br>Priority score: %{x:.3f}<extra></extra>",
+    ))
+    layout = {
+        **LIGHT_LAYOUT,
+        "title": dict(
+            text=title,
+            font=dict(family="Inter", size=13, color="#5a6577"),
+            x=0,
+            xanchor="left",
+        ),
+        "height": 430,
+        "margin": dict(l=8, r=18, t=46, b=22),
+        "xaxis": dict(
+            title=dict(text="Priority Score", font=dict(family="Inter", size=11, color="#5a6577")),
+            showgrid=True,
+            gridcolor="#f1f4f9",
+            zeroline=False,
+            tickfont=dict(family="Inter", size=10),
+        ),
+        "yaxis": dict(
+            title=None,
+            tickfont=dict(family="Inter", size=10),
+        ),
+    }
+    fig.update_layout(**layout)
+    st.plotly_chart(fig, use_container_width=True, key=f"priority_story_{value_col}_{name_col}")
+
+
+def _story_component_index(frame, value_col, norm_col=None):
+    if frame is None or frame.empty:
+        return pd.Series(dtype="float64")
+    if norm_col and norm_col in frame.columns:
+        values = pd.to_numeric(frame[norm_col], errors="coerce").fillna(0).clip(lower=0)
+        max_value = float(values.max()) if len(values) else 0.0
+        if max_value > 0:
+            return values.clip(upper=1.0)
+    if value_col in frame.columns:
+        return scale_to_max(frame[value_col])
+    return pd.Series(0.0, index=frame.index)
+
+
+def _component_bar(label, value, color):
+    pct = int(round(max(0.0, min(1.0, float(value or 0))) * 100))
+    return (
+        '<div class="education-story-bar">'
+        '<div class="education-story-bar__top">'
+        f"<span>{escape(label)}</span><strong>{pct}%</strong>"
+        "</div>"
+        '<div class="education-story-bar__track">'
+        f'<div class="education-story-bar__fill" style="width:{pct}%;background:{color};"></div>'
+        "</div>"
+        "</div>"
+    )
+
+
+def _education_country_story_card(row, score_col, config, period_label):
+    country = str(row["country"])
+    events = float(row["events"])
+    exposure = float(row["population_exposure"])
+    score = float(row[score_col])
+    support_proxy = float(row["education_support_proxy"])
+    conflict_index = float(row["conflict_index"])
+    education_index = float(row["education_weakness_index"])
+    exposure_index = float(row["exposure_index"])
+    source_year = int(row[config["source_year_col"]]) if float(row[config["source_year_col"]]) > 0 else None
+    indicator_count = int(row[config["indicator_count_col"]]) if float(row[config["indicator_count_col"]]) > 0 else None
+
+    if conflict_index >= 0.66 and education_index >= 0.66:
+        story_lead = "Severe disruption of learning due to conflict pressure."
+        access_phrase = "limited education access"
+    elif conflict_index >= 0.33 and education_index >= 0.66:
+        story_lead = "Education vulnerability driven by limited infrastructure under conflict stress."
+        access_phrase = "weak education access"
+    elif conflict_index >= 0.66:
+        story_lead = "Conflict pressure is the main force interrupting schooling."
+        access_phrase = "education access constraints"
+    elif education_index >= 0.66:
+        story_lead = "Education vulnerability is driven mainly by limited access and infrastructure."
+        access_phrase = "weaker education access"
+    else:
+        story_lead = "Education need is present, but no single pressure dominates this snapshot."
+        access_phrase = "education access pressure"
+
+    exposure_sentence = (
+        f"The large exposed population, about {fmt_big(exposure)} people, raises the scale of possible learning disruption."
+        if exposure_index >= 0.66
+        else f"Exposure still matters here: about {fmt_big(exposure)} people are represented in the affected population layer."
+        if exposure > 0
+        else "Population exposure is not available for this snapshot, so the story leans more heavily on conflict and education indicators."
+    )
+    narrative = (
+        f"Due to {fmt_big(events)} conflict events affecting {fmt_big(exposure)} people, "
+        f"and {access_phrase}, {country} shows an education priority score of {score:.3f}. "
+        "Conflict disrupts schooling and reduces safe access to learning, increasing vulnerability. "
+        f"{exposure_sentence}"
+    )
+    source_note = (
+        f"Education proxy: World Bank {source_year} - {indicator_count} indicator(s)"
+        if source_year and indicator_count
+        else "Education proxy: processed World Bank education indicators"
+    )
+    bars = (
+        _component_bar("Conflict contribution", conflict_index, "#b8703a") +
+        _component_bar("Education access weakness", education_index, "#a8864a") +
+        _component_bar("Population exposure", exposure_index, "#5a8a82")
+    )
+
+    return (
+        '<div class="education-story-card">'
+        '<div class="education-story-card__head">'
+        "<div>"
+        f'<div class="education-story-card__eyebrow">Country Education Story - {escape(period_label)}</div>'
+        f'<h3 class="education-story-card__title">{escape(country)}</h3>'
+        "</div>"
+        '<div class="education-story-score">'
+        "<span>Education Priority</span>"
+        f"<strong>{score:.3f}</strong>"
+        "</div>"
+        "</div>"
+        '<div class="education-story-grid">'
+        '<div class="education-story-visual">'
+        '<div class="education-story-pin"><span></span></div>'
+        '<div class="education-story-visual__label">Conflict, exposure, and learning access</div>'
+        "</div>"
+        "<div>"
+        '<div class="education-story-metrics">'
+        '<div class="education-story-metric">'
+        "<span>People needing education support</span>"
+        f'<strong>{fmt_big(support_proxy) if support_proxy > 0 else "N/A"}</strong>'
+        "<em>Estimated from exposure and education priority</em>"
+        "</div>"
+        '<div class="education-story-metric">'
+        "<span>Conflict events</span>"
+        f"<strong>{fmt_big(events)}</strong>"
+        "<em>ACLED events in this month</em>"
+        "</div>"
+        '<div class="education-story-metric">'
+        "<span>Population exposure</span>"
+        f"<strong>{fmt_big(exposure)}</strong>"
+        "<em>Population affected where available</em>"
+        "</div>"
+        "</div>"
+        '<div class="education-story-narrative">'
+        f"<strong>{escape(story_lead)}</strong>"
+        f"<p>{escape(narrative)}</p>"
+        "</div>"
+        f'<div class="education-story-bars">{bars}</div>'
+        "</div>"
+        "</div>"
+        f'<div class="education-story-source">{escape(source_note)}</div>'
+        "</div>"
+    )
+
+
+def render_education_priority_country_story(period_country, selected_country_name, selected_year, selected_month, config):
+    score_col = config["score_col"]
+    period_label = f"{selected_month} {selected_year}"
+    selected_country_norm = canonical_country_norm(selected_country_name)
+
+    if period_country.empty or score_col not in period_country.columns:
+        st.info(f"No country-level education priority story data is available for {period_label}.")
+        return
+
+    agg_spec = {
+        score_col: "mean",
+        "events": "sum",
+        "population_exposure": "sum",
+    }
+    for optional_col in [
+        "events_norm",
+        "exposure_norm",
+        config["source_year_col"],
+        config["indicator_count_col"],
+    ]:
+        if optional_col in period_country.columns:
+            agg_spec[optional_col] = "mean"
+
+    story_rows = (
+        period_country.groupby(["country", "country_norm"], as_index=False)
+        .agg(agg_spec)
+        .copy()
+    )
+    for col in [score_col, "events", "population_exposure"]:
+        story_rows[col] = pd.to_numeric(story_rows[col], errors="coerce").fillna(0.0)
+    for col in [config["source_year_col"], config["indicator_count_col"], "events_norm", "exposure_norm"]:
+        if col not in story_rows.columns:
+            story_rows[col] = 0.0
+        story_rows[col] = pd.to_numeric(story_rows[col], errors="coerce").fillna(0.0)
+
+    story_rows = story_rows[story_rows[score_col] > 0].copy()
+    if story_rows.empty:
+        st.info(f"No education priority values above 0 are available for {period_label}.")
+        return
+
+    story_rows["conflict_index"] = _story_component_index(story_rows, "events", "events_norm")
+    story_rows["education_weakness_index"] = _story_component_index(story_rows, score_col)
+    story_rows["exposure_index"] = _story_component_index(story_rows, "population_exposure", "exposure_norm")
+    story_rows["education_support_proxy"] = (
+        story_rows["population_exposure"].clip(lower=0) *
+        story_rows[score_col].clip(lower=0)
+    )
+
+    selected_story = story_rows[story_rows["country_norm"] == selected_country_norm].copy()
+    if selected_story.empty:
+        st.info(f"No education priority story data is available for {selected_country_name} in {period_label}.")
+        return
+    selected_story = selected_story.sort_values(
+        [score_col, "population_exposure", "events"],
+        ascending=[False, False, False],
+    ).head(1)
+
+    st.markdown(
+        '<div class="section-title" style="margin-top:36px;">'
+        '<span class="section-dot"></span>How conflict increases education needs across countries</div>',
+        unsafe_allow_html=True,
+    )
+
+    cards_html = "".join(
+        _education_country_story_card(row, score_col, config, period_label)
+        for _, row in selected_story.iterrows()
+    )
+
+    st.markdown(f"""
+    <style>
+    .education-story-card {{
+        margin-top: 14px;
+        background: #ffffff;
+        border: 1px solid #e4e8ef;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(20, 30, 50, 0.06);
+        padding: 22px;
+    }}
+    .education-story-card__head {{
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        border-bottom: 1px solid #eef1f6;
+        padding-bottom: 16px;
+        margin-bottom: 18px;
+    }}
+    .education-story-card__eyebrow {{
+        font-family: 'Inter', sans-serif;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #8893a4;
+        margin-bottom: 6px;
+    }}
+    .education-story-card__title {{
+        font-family: 'Playfair Display', serif;
+        font-size: 28px;
+        font-weight: 700;
+        line-height: 1.12;
+        color: #1b2230;
+        margin: 0;
+    }}
+    .education-story-score {{
+        min-width: 112px;
+        text-align: right;
+    }}
+    .education-story-score span {{
+        display: block;
+        font-family: 'Inter', sans-serif;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #8893a4;
+        margin-bottom: 4px;
+    }}
+    .education-story-score strong {{
+        font-family: 'Playfair Display', serif;
+        font-size: 28px;
+        color: #a8864a;
+    }}
+    .education-story-grid {{
+        display: grid;
+        grid-template-columns: 0.88fr 1.62fr;
+        gap: 22px;
+        align-items: stretch;
+    }}
+    .education-story-visual {{
+        min-height: 270px;
+        border-radius: 8px;
+        background: linear-gradient(135deg, #f8fafc 0%, #eef1f6 100%);
+        border: 1px solid #e4e8ef;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        position: relative;
+        overflow: hidden;
+    }}
+    .education-story-visual::before {{
+        content: "";
+        position: absolute;
+        inset: 34px 30px auto 30px;
+        height: 118px;
+        border-radius: 50% 46% 54% 42%;
+        background: rgba(168, 134, 74, 0.16);
+        border: 1px solid rgba(168, 134, 74, 0.22);
+        transform: rotate(-8deg);
+    }}
+    .education-story-visual::after {{
+        content: "";
+        position: absolute;
+        width: 92px;
+        height: 92px;
+        border-radius: 50%;
+        background: rgba(44, 74, 110, 0.12);
+        border: 1px solid rgba(44, 74, 110, 0.18);
+        right: 42px;
+        top: 84px;
+    }}
+    .education-story-pin {{
+        position: relative;
+        z-index: 1;
+        width: 74px;
+        height: 74px;
+        border-radius: 50% 50% 50% 8px;
+        transform: rotate(-45deg);
+        background: #a8864a;
+        box-shadow: 0 12px 26px rgba(168, 134, 74, 0.26);
+    }}
+    .education-story-pin span {{
+        position: absolute;
+        inset: 19px;
+        border-radius: 50%;
+        background: #ffffff;
+        transform: rotate(45deg);
+    }}
+    .education-story-visual__label {{
+        position: relative;
+        z-index: 1;
+        margin-top: 26px;
+        font-family: 'Inter', sans-serif;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #5a6577;
+        text-align: center;
+    }}
+    .education-story-metrics {{
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-bottom: 16px;
+    }}
+    .education-story-metric {{
+        background: #f7f8fa;
+        border: 1px solid #e4e8ef;
+        border-radius: 8px;
+        padding: 14px 14px 13px 14px;
+    }}
+    .education-story-metric span {{
+        display: block;
+        font-family: 'Inter', sans-serif;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+        color: #8893a4;
+        margin-bottom: 7px;
+    }}
+    .education-story-metric strong {{
+        display: block;
+        font-family: 'Playfair Display', serif;
+        font-size: 24px;
+        color: #1b2230;
+        line-height: 1.05;
+    }}
+    .education-story-metric em {{
+        display: block;
+        margin-top: 5px;
+        font-family: 'Inter', sans-serif;
+        font-size: 11px;
+        font-style: normal;
+        color: #8893a4;
+        line-height: 1.4;
+    }}
+    .education-story-narrative {{
+        background: #faf5ea;
+        border-left: 3px solid #a8864a;
+        border-radius: 0 8px 8px 0;
+        padding: 14px 16px;
+        margin-bottom: 16px;
+    }}
+    .education-story-narrative strong {{
+        display: block;
+        font-family: 'Inter', sans-serif;
+        font-size: 12px;
+        font-weight: 700;
+        color: #6e5727;
+        margin-bottom: 6px;
+    }}
+    .education-story-narrative p {{
+        margin: 0;
+        font-family: 'Inter', sans-serif;
+        font-size: 13px;
+        color: #5a6577;
+        line-height: 1.75;
+    }}
+    .education-story-bars {{
+        display: grid;
+        gap: 10px;
+    }}
+    .education-story-bar__top {{
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 5px;
+        font-family: 'Inter', sans-serif;
+        font-size: 11px;
+        color: #5a6577;
+    }}
+    .education-story-bar__top strong {{
+        color: #1b2230;
+    }}
+    .education-story-bar__track {{
+        height: 9px;
+        background: #eef1f6;
+        border-radius: 999px;
+        overflow: hidden;
+    }}
+    .education-story-bar__fill {{
+        height: 100%;
+        border-radius: 999px;
+    }}
+    .education-story-source {{
+        font-family: 'Inter', sans-serif;
+        font-size: 11px;
+        color: #8893a4;
+        line-height: 1.6;
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px solid #eef1f6;
+    }}
+    @media (max-width: 900px) {{
+        .education-story-grid,
+        .education-story-metrics {{
+            grid-template-columns: 1fr;
+        }}
+        .education-story-card__head {{
+            flex-direction: column;
+        }}
+        .education-story-score {{
+            text-align: left;
+        }}
+    }}
+    </style>
+    {cards_html}
+    <div style="font-family:'Inter',sans-serif;font-size:11px;color:#8893a4;line-height:1.6;margin-top:8px;">
+      Showing the education story for {escape(selected_country_name)} in {escape(period_label)}. Education proxies reuse the processed World Bank education indicators already in the priority dataset.
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_service_priority_story(selected_country_name, selected_year, selected_month, priority_mode):
+    config = SERVICE_PRIORITY_STORY.get(priority_mode)
+    if not config:
+        return
+
+    score_col = config["score_col"]
+    period_label = f"{selected_month} {selected_year}"
+    country_norm = canonical_country_norm(selected_country_name)
+    country_rows = get_country_admin_rows(country_priority, selected_country_name)
+    period_row = get_country_priority_period_row(country_rows, selected_year, selected_month)
+    period_values = row_to_values(period_row)
+    score_value = numeric_value(period_values, score_col)
+    source_year = numeric_value(period_values, config["source_year_col"], default=0.0)
+    indicator_count = numeric_value(period_values, config["indicator_count_col"], default=0.0)
+    events_value = numeric_value(period_values, "events")
+    exposure_value = numeric_value(period_values, "population_exposure")
+    tone = config["tone"]
+    soft_bg = config["soft_bg"]
+    service = config["service"]
+
+    if priority_mode == "Education Priority":
+        period_country = _priority_period_slice(country_priority, selected_year, selected_month)
+        render_education_priority_country_story(
+            period_country,
+            selected_country_name,
+            selected_year,
+            selected_month,
+            config,
+        )
+        return
+
+    source_text = str(int(source_year)) if source_year > 0 else "N/A"
+    indicator_text = str(int(indicator_count)) if indicator_count > 0 else "N/A"
+    score_text = f"{score_value:.3f}" if score_value > 0 else "N/A"
+
+    st.markdown(
+        f'<div class="section-title" style="margin-top:36px;">'
+        f'<span class="section-dot"></span>{service} Priority Story</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(f"""
+    <div style="padding:20px 0 10px 0;">
+      <p style="font-family:'Playfair Display',serif;font-size:22px;font-weight:600;color:#1b2230;line-height:1.4;margin:0 0 10px 0;">
+        {config["title"]}
+      </p>
+      <p style="font-family:'Inter',sans-serif;font-size:14px;color:#5a6577;line-height:1.85;margin:0;max-width:780px;">
+        {config["body"]}
+      </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown(f"""
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="kpi-accent"></div>
+        <div class="kpi-label">{service} Priority</div>
+        <div class="kpi-value">{score_text}</div>
+        <div class="kpi-sub">{selected_country_name} - {period_label}</div>
+      </div>
+      <div class="kpi-card warm">
+        <div class="kpi-accent"></div>
+        <div class="kpi-label">Conflict Pressure</div>
+        <div class="kpi-value">{fmt_big(events_value)}</div>
+        <div class="kpi-sub">Events in the selected month</div>
+      </div>
+      <div class="kpi-card teal">
+        <div class="kpi-accent"></div>
+        <div class="kpi-label">Population Exposure</div>
+        <div class="kpi-value">{fmt_big(exposure_value)}</div>
+        <div class="kpi-sub">People exposed where available</div>
+      </div>
+      <div class="kpi-card gold">
+        <div class="kpi-accent"></div>
+        <div class="kpi-label">Access Evidence</div>
+        <div class="kpi-value" style="font-size:24px;">{source_text}</div>
+        <div class="kpi-sub">{indicator_text} indicator(s)</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if score_value <= 0:
+        st.info(f"No {service.lower()} priority score is available for {selected_country_name} in {period_label}.")
+
+    if priority_mode == "Health Priority" and country_norm == "lebanon":
+        admin_health = _priority_period_slice(load_lebanon_admin1_priority(), selected_year, selected_month)
+        if not admin_health.empty and "priority_score" in admin_health.columns:
+            admin_health = admin_health.copy()
+            admin_health["admin1_label"] = admin_health["admin1_norm"].apply(
+                lambda value: str(value).replace("-", " ").title()
+            )
+            _render_priority_story_bar(
+                admin_health,
+                "admin1_label",
+                "priority_score",
+                f"Health priority by governorate ({selected_country_name}, {period_label})",
+                tone=tone,
+            )
+            st.markdown(f"""
+            <div style="margin-top:6px;padding:12px 16px;background:{soft_bg};border-left:3px solid {tone};border-radius:0 8px 8px 0;">
+              <span style="font-family:'Inter',sans-serif;font-size:12px;color:#1b2230;">
+                Governorates with higher conflict pressure and weaker care access receive higher health priority because treatment capacity is harder to reach when violence intensifies.
+              </span>
+            </div>
+            """, unsafe_allow_html=True)
+            return
+
+    period_country = _priority_period_slice(country_priority, selected_year, selected_month)
+    if period_country.empty or score_col not in period_country.columns:
+        st.info(f"No country-level {service.lower()} priority comparison is available for {period_label}.")
+        return
+
+    chart_source = (
+        period_country.groupby(["country", "country_norm"], as_index=False)
+        .agg({
+            score_col: "mean",
+            "events": "sum",
+            "population_exposure": "sum",
+        })
+    )
+    chart_source[score_col] = pd.to_numeric(chart_source[score_col], errors="coerce").fillna(0)
+    top = chart_source.sort_values(score_col, ascending=False).head(10).copy()
+    selected = chart_source[chart_source["country_norm"] == country_norm].copy()
+    if not selected.empty and country_norm not in set(top["country_norm"]):
+        top = pd.concat([top, selected.head(1)], ignore_index=True)
+    top["is_selected"] = top["country_norm"] == country_norm
+
+    _render_priority_story_bar(
+        top,
+        "country",
+        score_col,
+        f"Countries with the highest {service.lower()} priority ({period_label})",
+        tone=tone,
+        highlight_col="is_selected",
+    )
+    st.markdown(f"""
+    <div style="margin-top:6px;padding:12px 16px;background:{soft_bg};border-left:3px solid {tone};border-radius:0 8px 8px 0;">
+      <span style="font-family:'Inter',sans-serif;font-size:12px;color:#1b2230;">
+        The priority score rises when conflict pressure overlaps with weaker {service.lower()} access, so two places with similar violence can rank differently when service access is not equally resilient.
+      </span>
+    </div>
+    """, unsafe_allow_html=True)
+
+
 def build_mapbox_center(gdf, default_lat=20, default_lon=10):
     if gdf is None or gdf.empty or "geometry" not in gdf.columns:
         return {"lat": default_lat, "lon": default_lon}
@@ -3195,6 +3906,7 @@ def load_admin1_priority():
         "priority_score_country", "priority_rank_country",
         "events_norm_global", "fatalities_norm_global", "displaced_norm_global", "exposure_norm_global",
         "priority_score_global", "priority_rank_global",
+        "health_priority_score", "education_priority_score",
     ]
     for col in numeric_cols:
         if col in df.columns:
@@ -3466,6 +4178,37 @@ def load_lebanon_admin2_conflict():
     df = df[
         df["admin1_norm"].notna() &
         df["admin2_norm"].notna() &
+        df["year"].between(MIN_YEAR, MAX_YEAR)
+    ].copy()
+    return df
+
+@st.cache_data(show_spinner=False)
+def load_lebanon_admin1_priority():
+    if not lbn_admin1_priority_path.exists():
+        return pd.DataFrame(
+            columns=[
+                "admin1_norm", "year", "month_num", "month", "events", "fatalities",
+                "population_exposure", "access_risk", "demographic_vulnerability",
+                "priority_score", "priority_rank",
+            ]
+        )
+    df = pd.read_csv(lbn_admin1_priority_path)
+    for col in ["admin1_norm", "month"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+    numeric_cols = [
+        "year", "month_num", "events", "fatalities", "population_exposure",
+        "access_risk", "hospital_access_risk", "phc_access_risk",
+        "demographic_vulnerability", "priority_score", "priority_rank",
+    ]
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["admin1_norm"] = df["admin1_norm"].apply(lambda value: standardize_admin_name(value, "Lebanon"))
+    df["year"] = df["year"].fillna(0).astype(int)
+    df["month_num"] = df["month_num"].fillna(0).astype(int)
+    df = df[
+        df["admin1_norm"].notna() &
         df["year"].between(MIN_YEAR, MAX_YEAR)
     ].copy()
     return df
@@ -4102,12 +4845,12 @@ def build_country_admin2_priority_view(country_admin2_boundary, selected_country
     if float(merged["displaced"].sum()) <= 0 and float(merged["displaced_in"].sum()) > 0:
         merged["displaced"] = merged["displaced_in"]
         parent_distributed = True
-    print(f"[hierarchy validation] Country: {selected_country_name}")
-    print(f"[hierarchy validation] Admin1: {admin1_norm}")
+    # print(f"[hierarchy validation] Country: {selected_country_name}")
+    # print(f"[hierarchy validation] Admin1: {admin1_norm}")
     for _metric in ["events", "fatalities", "population_exposure", "displaced", "displaced_in"]:
         _parent_total = numeric_value(admin1_values, _metric)
         _child_total = float(pd.to_numeric(merged[_metric], errors="coerce").fillna(0).sum()) if _metric in merged.columns else 0.0
-        print(f"[hierarchy validation] {_metric}: admin1 total={_parent_total:.3f}; admin2 sum={_child_total:.3f}")
+        # print(f"[hierarchy validation] {_metric}: admin1 total={_parent_total:.3f}; admin2 sum={_child_total:.3f}")
     merged = compute_admin2_priority_scores(merged)
     if "has_acled_data" not in merged.columns:
         merged["has_acled_data"] = False
@@ -5631,20 +6374,13 @@ if st.session_state["view"] == "world":
     # ─────────────────────────────────────────────
     else:
         st.sidebar.markdown('<div class="sidebar-section">Metric</div>', unsafe_allow_html=True)
-        metric = st.sidebar.selectbox(
-            "Priority Metric",
-            [
-                "country_priority_score",
-                "health_priority_score",
-                "education_priority_score",
-                "events",
-                "fatalities",
-                "displaced",
-                "population_exposure",
-            ],
+        selected_priority_mode = st.sidebar.selectbox(
+            "Priority Filter",
+            PRIORITY_MODE_OPTIONS,
             index=0,
             label_visibility="collapsed",
         )
+        metric = WORLD_PRIORITY_MODE_TO_METRIC[selected_priority_mode]
 
         filtered = base_df[(base_df["year"] == selected_year) &
                            (base_df["month"].str.lower() == selected_month.lower())].copy()
@@ -5658,6 +6394,7 @@ if st.session_state["view"] == "world":
                 "events":"sum","fatalities":"sum","population_exposure":"sum",
                 "displaced":"sum",
                 "country_priority_score":"mean",
+                "country_priority_score_base":"mean",
                 "country_priority_rank":"min",
                 "health_priority_score":"mean",
                 "education_priority_score":"mean",
@@ -5669,7 +6406,8 @@ if st.session_state["view"] == "world":
         merged_w = world.merge(world_pri, how="left", on="country_norm")
         for col in [
             "events", "fatalities", "population_exposure", "displaced",
-            "country_priority_score", "health_priority_score", "education_priority_score",
+            "country_priority_score", "country_priority_score_base",
+            "health_priority_score", "education_priority_score",
         ]:
             merged_w[col] = pd.to_numeric(merged_w[col], errors="coerce").fillna(0)
         merged_w["country"] = merged_w["country"].fillna(merged_w["country_name_geo"])
@@ -6047,6 +6785,8 @@ else:
         selected_month,
     )
 
+    selected_priority_mode = None
+
     if country_mode == "Conflict":
         conflict_period_rows = country_conflict_rows[
             (country_conflict_rows["year"] == selected_year) &
@@ -6338,11 +7078,12 @@ else:
                 render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_big)
 
     else:
-        selected_metric = st.sidebar.selectbox(
-            "Metric",
-            ["priority_score_country", "priority_score_global", "events", "fatalities", "displaced", "population_exposure"],
+        selected_priority_mode = st.sidebar.selectbox(
+            "Priority Filter",
+            PRIORITY_MODE_OPTIONS,
             index=0,
         )
+        selected_metric = COUNTRY_PRIORITY_MODE_TO_METRIC[selected_priority_mode]
 
         priority_slice = country_priority_rows[
             (country_priority_rows["year"] == selected_year) &
@@ -6366,6 +7107,9 @@ else:
             agg_dict["priority_score_global"] = "mean"
         if "displaced_in" in priority_slice.columns:
             agg_dict["displaced_in"] = "sum"
+        for service_score_col in ["health_priority_score", "education_priority_score"]:
+            if service_score_col in priority_slice.columns:
+                agg_dict[service_score_col] = "mean"
 
         merged = boundary_gdf.merge(
             priority_slice.groupby("admin1_norm", as_index=False).agg(agg_dict),
@@ -6396,11 +7140,18 @@ else:
             merged = merged.drop(columns=["displaced_in_dest"])
 
         for col in ["events","fatalities","displaced","population_exposure","priority_score_country",
-                    "priority_score_global","displaced_in"]:
+                    "priority_score_global","displaced_in","health_priority_score","education_priority_score"]:
             if col not in merged.columns:
                 merged[col] = 0
             merged[col] = pd.to_numeric(merged[col], errors="coerce").fillna(0)
         merged["displaced"] = merged["displaced"].where(merged["displaced"] > 0, merged["displaced_in"])
+
+        country_priority_values = row_to_values(selected_country_priority_row)
+        for service_score_col in ["health_priority_score", "education_priority_score"]:
+            country_score = numeric_value(country_priority_values, service_score_col)
+            if country_score > 0 and float(pd.to_numeric(merged[service_score_col], errors="coerce").fillna(0).sum()) <= 0:
+                merged[service_score_col] = country_score
+
         priority_fallback = _fallback_priority_score(merged)
         for score_col in ["priority_score_country", "priority_score_global"]:
             score_values = pd.to_numeric(merged[score_col], errors="coerce").fillna(0.0)
@@ -6435,8 +7186,14 @@ else:
         """, unsafe_allow_html=True)
 
         render_country_need_detail(selected_country_name, selected_country_priority_row)
+        if selected_metric in {"health_priority_score", "education_priority_score"}:
+            if selected_metric not in priority_slice.columns or float(pd.to_numeric(priority_slice.get(selected_metric, pd.Series(dtype="float64")), errors="coerce").fillna(0).sum()) <= 0:
+                st.info(
+                    f"Admin1 {metric_label(selected_metric).lower()} values are not available for this country-period. "
+                    "The map uses the country-level score as a fallback while the story section shows the available comparison context."
+                )
 
-        if selected_metric in ["priority_score_country", "priority_score_global"]:
+        if selected_metric in ["priority_score_country", "priority_score_global", "health_priority_score", "education_priority_score"]:
             cscale = SCALE_BLUE
             fmt_fn = lambda v: f"{v:.3f}"
         elif selected_metric == "fatalities":
@@ -6460,7 +7217,10 @@ else:
             hover_data={
                 "events":True,"fatalities":True,"displaced":True,
                 "population_exposure":True,"priority_score_country":":.3f",
-                "priority_score_global":":.3f","displaced_in":True,
+                "priority_score_global":":.3f",
+                "health_priority_score":":.3f",
+                "education_priority_score":":.3f",
+                "displaced_in":True,
                 "admin_name_norm":False,
             },
             mapbox_style="carto-positron",
@@ -6517,6 +7277,16 @@ else:
                     _detail_scale = SCALE_BLUE
                     _detail_fmt = lambda v: f"{v:.3f}"
                     _detail_label = "Priority Score"
+                elif selected_metric in {"health_priority_score", "education_priority_score"}:
+                    _detail_metric = (
+                        selected_metric
+                        if selected_metric in _admin2_gdf.columns and
+                        float(pd.to_numeric(_admin2_gdf[selected_metric], errors="coerce").fillna(0).sum()) > 0
+                        else "priority_score"
+                    )
+                    _detail_scale = SCALE_BLUE
+                    _detail_fmt = lambda v: f"{v:.3f}"
+                    _detail_label = metric_label(selected_metric)
                 elif selected_metric == "fatalities":
                     _detail_metric = "fatalities"
                     _detail_scale = SCALE_WARM
@@ -6542,7 +7312,7 @@ else:
                     [
                         "priority_score", "priority_score_country", "priority_score_global",
                         "priority_rank", "events", "fatalities", "population_exposure",
-                        "displaced", "displaced_in",
+                        "displaced", "displaced_in", "health_priority_score", "education_priority_score",
                     ],
                 )
                 if "district_value_source" not in _admin2_gdf.columns:
@@ -6571,6 +7341,8 @@ else:
                     hover_name="admin2_label",
                     hover_data={
                         "priority_score": ":.3f",
+                        "health_priority_score": ":.3f",
+                        "education_priority_score": ":.3f",
                         "priority_rank": True,
                         "events": True,
                         "fatalities": True,
@@ -6672,80 +7444,81 @@ else:
                 render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_fn)
 
     # ─────────────────────────────────────────────
-    # DISPLACEMENT STORY — full period 2024–2026
+    # CONDITIONAL PRIORITY STORY MODULES
     # ─────────────────────────────────────────────
-    cnorm_story = canonical_country_norm(selected_country_name)
-    story_displacement_mode = "latest"
-    story_disp_in_rows = displacement_dest[displacement_dest["country"] == cnorm_story].copy()
-    story_disp_out_rows = displacement_origin[displacement_origin["country"] == cnorm_story].copy()
-    story_arrivals_snapshot, story_arrivals_period = get_latest_displacement_snapshot(
-        story_disp_in_rows,
-        ["admin1_norm"],
-        "displaced_in",
-    )
-    story_departures_snapshot, story_departures_period = get_latest_displacement_snapshot(
-        story_disp_out_rows,
-        ["admin1_norm"],
-        "displaced_from",
-    )
-    story_snapshot_period = (
-        story_arrivals_period
-        or get_latest_period(country_priority_rows)
-    )
-    story_snapshot_label = format_period_label(story_snapshot_period) or "the latest available month"
+    if country_mode == "Priority" and selected_priority_mode == "Displacement Priority":
+        cnorm_story = canonical_country_norm(selected_country_name)
+        story_displacement_mode = "latest"
+        story_disp_in_rows = displacement_dest[displacement_dest["country"] == cnorm_story].copy()
+        pri_rows_story = admin1_priority[admin1_priority["country_norm"] == cnorm_story].copy()
 
-    st.markdown(
-        f'<div class="section-title" style="margin-top:36px;">'
-        f'<span class="section-dot"></span>Displacement Snapshot - {story_snapshot_label}</div>',
-        unsafe_allow_html=True,
-    )
+        story_snapshot_period, _period_source, _period_mismatch = resolve_displacement_period(
+            story_disp_in_rows, None, pri_rows_story
+        )
+        story_arrivals_snapshot, story_arrivals_period = get_latest_displacement_snapshot(
+            story_disp_in_rows,
+            ["admin1_norm"],
+            "displaced_in",
+            period=story_snapshot_period,
+        )
+        story_snapshot_label = format_period_label(story_snapshot_period) or "the latest available month"
 
-    tab_overview, tab_bubbles, tab_priority = st.tabs([
-        "Overview",
-        "Displacement & Pressure",
-        "Why Priority Changes",
-    ])
-
-    with tab_overview:
-        render_displacement_snapshot_overview(
-            selected_country_name,
-            boundary_gdf,
-            story_arrivals_snapshot,
-            story_arrivals_period,
-            story_departures_snapshot,
-            story_departures_period,
-            displacement_mode=story_displacement_mode,
+        st.markdown(
+            f'<div class="section-title" style="margin-top:36px;">'
+            f'<span class="section-dot"></span>Displacement Snapshot - {story_snapshot_label}</div>',
+            unsafe_allow_html=True,
         )
 
-    with tab_bubbles:
-        st.markdown(f"""
-        <div style="padding:20px 0 10px 0;">
-          <p style="font-family:'Playfair Display',serif;font-size:22px;font-weight:600;color:#1b2230;line-height:1.4;margin:0 0 10px 0;">
-            Where are displaced people concentrated across {selected_country_name}?
-          </p>
-          <p style="font-family:'Inter',sans-serif;font-size:14px;color:#5a6577;line-height:1.85;margin:0 0 4px 0;max-width:680px;">
-            Each circle represents one admin1 area.
-            <strong>Size</strong> reflects displaced people in {story_snapshot_label}.
-            <strong>Color</strong> shows the priority score for the same snapshot where available.
-            
-          </p>
-          <p style="font-family:'Inter',sans-serif;font-size:12px;color:#8893a4;line-height:1.6;margin:0;">
-            Snapshot month: <strong style="color:#1b2230;">{story_snapshot_label}</strong>.
-            Hover any circle for displacement, priority, and conflict context.
-          </p>
-        </div>
-        """, unsafe_allow_html=True)
-        render_displacement_snapshot_bubble_story(
-            selected_country_name,
-            boundary_gdf,
-            snapshot_period=story_snapshot_period,
-            displacement_mode=story_displacement_mode,
-        )
+        tab_overview, tab_bubbles, tab_priority = st.tabs([
+            "Overview",
+            "Displacement & Pressure",
+            "Why Priority Changes",
+        ])
 
-    with tab_priority:
-        render_displacement_snapshot_priority_scatter(
+        with tab_overview:
+            render_displacement_snapshot_overview(
+                selected_country_name,
+                boundary_gdf,
+                story_arrivals_snapshot,
+                story_arrivals_period,
+                displacement_mode=story_displacement_mode,
+            )
+
+        with tab_bubbles:
+            st.markdown(f"""
+            <div style="padding:20px 0 10px 0;">
+              <p style="font-family:'Playfair Display',serif;font-size:22px;font-weight:600;color:#1b2230;line-height:1.4;margin:0 0 10px 0;">
+                Where are displaced people concentrated across {selected_country_name}?
+              </p>
+              <p style="font-family:'Inter',sans-serif;font-size:14px;color:#5a6577;line-height:1.85;margin:0 0 4px 0;max-width:680px;">
+                Each circle represents one admin1 area.
+                <strong>Size</strong> reflects displaced people in {story_snapshot_label}.
+                <strong>Color</strong> shows the priority score for the same snapshot where available.
+              </p>
+              <p style="font-family:'Inter',sans-serif;font-size:12px;color:#8893a4;line-height:1.6;margin:0;">
+                Snapshot month: <strong style="color:#1b2230;">{story_snapshot_label}</strong>.
+                Hover any circle for displacement, priority, and conflict context.
+              </p>
+            </div>
+            """, unsafe_allow_html=True)
+            render_displacement_snapshot_bubble_story(
+                selected_country_name,
+                boundary_gdf,
+                snapshot_period=story_snapshot_period,
+                displacement_mode=story_displacement_mode,
+            )
+
+        with tab_priority:
+            render_displacement_snapshot_priority_scatter(
+                selected_country_name,
+                boundary_gdf,
+                snapshot_period=story_snapshot_period,
+                displacement_mode=story_displacement_mode,
+            )
+    elif country_mode == "Priority" and selected_priority_mode in {"Health Priority", "Education Priority"}:
+        render_service_priority_story(
             selected_country_name,
-            boundary_gdf,
-            snapshot_period=story_snapshot_period,
-            displacement_mode=story_displacement_mode,
+            selected_year,
+            selected_month,
+            selected_priority_mode,
         )
