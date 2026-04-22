@@ -1253,6 +1253,40 @@ def format_metric_value(metric, value):
         return "—"
     return f"{value:.3f}" if is_score_metric(metric) else fmt_big(value)
 
+def build_nonzero_hover_text(frame, metric_specs, text_specs=None, empty_message="No non-zero values available"):
+    text_specs = text_specs or []
+
+    def _format_value(value, value_type):
+        try:
+            value = float(pd.to_numeric(value, errors="coerce"))
+        except Exception:
+            return None
+        if pd.isna(value) or abs(value) <= 1e-12:
+            return None
+        if value_type == "score":
+            return f"{value:.3f}"
+        if value_type == "rank":
+            return f"{int(round(value)):,}"
+        return fmt_big(value)
+
+    def _row_text(row):
+        lines = []
+        for col, label, value_type in metric_specs:
+            if col not in row.index:
+                continue
+            formatted = _format_value(row.get(col), value_type)
+            if formatted is not None:
+                lines.append(f"{escape(str(label))}: {escape(str(formatted))}")
+        for col, label in text_specs:
+            if col not in row.index:
+                continue
+            raw_text = str(row.get(col, "") or "").strip()
+            if raw_text and raw_text.lower() not in {"0", "0.0", "nan", "none"}:
+                lines.append(f"{escape(str(label))}: {escape(raw_text)}")
+        return "<br>".join(lines) if lines else empty_message
+
+    return frame.apply(_row_text, axis=1)
+
 def get_country_priority_period_row(country_rows, selected_year, selected_month):
     period_rows = country_rows[
         (country_rows["year"] == selected_year) &
@@ -3629,6 +3663,654 @@ def render_education_priority_country_story(period_country, selected_country_nam
     """, unsafe_allow_html=True)
 
 
+def _health_country_story_card(row, score_col, config, period_label):
+    country = str(row["country_label"])
+    events = float(row["events"])
+    exposure = float(row["population_exposure"])
+    score = float(row[score_col])
+    support_proxy = float(row["health_support_proxy"])
+    conflict_index = float(row["conflict_index"])
+    health_index = float(row["health_access_weakness_index"])
+    exposure_index = float(row["exposure_index"])
+    source_year = int(row[config["source_year_col"]]) if float(row[config["source_year_col"]]) > 0 else None
+    indicator_count = int(row[config["indicator_count_col"]]) if float(row[config["indicator_count_col"]]) > 0 else None
+
+    if conflict_index >= 0.66 and health_index >= 0.66:
+        story_lead = "Severe pressure on care access under conflict."
+        access_phrase = "limited health access"
+        access_status = "Severe access weakness"
+    elif conflict_index >= 0.33 and health_index >= 0.66:
+        story_lead = "Health vulnerability driven by limited care capacity under conflict stress."
+        access_phrase = "weak care access"
+        access_status = "Weak care access"
+    elif conflict_index >= 0.66:
+        story_lead = "Conflict pressure is the main driver of urgent health need."
+        access_phrase = "health-system strain"
+        access_status = "Conflict-driven strain"
+    elif health_index >= 0.66:
+        story_lead = "Health priority is driven mainly by weaker access to care."
+        access_phrase = "limited care availability"
+        access_status = "Limited care access"
+    else:
+        story_lead = "Health need is present, but no single pressure dominates this snapshot."
+        access_phrase = "health access pressure"
+        access_status = "Moderate access pressure"
+
+    exposure_sentence = (
+        f"The large exposed population, about {fmt_big(exposure)} people, increases the scale of possible unmet medical need."
+        if exposure_index >= 0.66
+        else f"About {fmt_big(exposure)} people are represented in the exposure layer for this snapshot."
+        if exposure > 0
+        else "Population exposure is not available for this snapshot, so the story relies more on conflict and health-access indicators."
+    )
+    narrative = (
+        f"Due to {fmt_big(events)} conflict events affecting {fmt_big(exposure)} people, "
+        f"and {access_phrase}, {country} shows a health priority score of {score:.3f}. "
+        "Conflict makes routine treatment, emergency response, and safe access to facilities harder to maintain. "
+        f"{exposure_sentence}"
+    )
+    source_note = (
+        f"Health proxy: World Bank {source_year} - {indicator_count} indicator(s)"
+        if source_year and indicator_count
+        else "Health proxy: processed World Bank health indicators"
+    )
+    bars = (
+        _component_bar("Conflict contribution", conflict_index, "#b8703a") +
+        _component_bar("Health access weakness", health_index, "#5a8a82") +
+        _component_bar("Population exposure", exposure_index, "#a8864a")
+    )
+    pathway_steps = [
+        ("01", "Conflict pressure", fmt_big(events), "ACLED events this month", "#b8703a"),
+        ("02", "People exposed", fmt_big(exposure), "Population affected where available", "#a8864a"),
+        ("03", "Limited care access", access_status, f"{int(round(health_index * 100))}% weakness signal", "#5a8a82"),
+        ("04", "Higher health priority", f"{score:.3f}", "Final priority score", "#2c4a6e"),
+    ]
+    pathway_html = "".join(
+        '<div class="health-pathway-step">'
+        f'<div class="health-pathway-step__num" style="border-color:{color};color:{color};">{num}</div>'
+        f'<div class="health-pathway-step__label">{escape(label)}</div>'
+        f'<div class="health-pathway-step__value">{escape(str(value))}</div>'
+        f'<div class="health-pathway-step__note">{escape(note)}</div>'
+        "</div>"
+        for num, label, value, note, color in pathway_steps
+    )
+
+    return (
+        '<div class="health-pathway-card">'
+        '<div class="health-pathway-head">'
+        "<div>"
+        f'<div class="health-pathway-eyebrow">Country Health Pathway - {escape(period_label)}</div>'
+        f'<h3 class="health-pathway-title">{escape(country)}</h3>'
+        '<p class="health-pathway-subtitle">Conflict pressure + exposed people + limited care access combine into the health-priority signal.</p>'
+        "</div>"
+        '<div class="health-pathway-score">'
+        "<span>Health Priority</span>"
+        f"<strong>{score:.3f}</strong>"
+        "</div>"
+        "</div>"
+        f'<div class="health-pathway-flow">{pathway_html}</div>'
+        '<div class="health-pathway-bottom">'
+        '<div class="health-pathway-narrative">'
+        f"<strong>{escape(story_lead)}</strong>"
+        f"<p>{escape(narrative)}</p>"
+        "</div>"
+        '<div class="health-pathway-impact">'
+        "<span>Estimated health support need</span>"
+        f'<strong>{fmt_big(support_proxy) if support_proxy > 0 else "N/A"}</strong>'
+        "<em>Exposure weighted by health priority</em>"
+        "</div>"
+        "</div>"
+        f'<div class="education-story-bars health-pathway-bars">{bars}</div>'
+        f'<div class="education-story-source">{escape(source_note)}</div>'
+        "</div>"
+    )
+
+
+def render_health_priority_country_story(period_country, selected_country_name, selected_year, selected_month, config):
+    score_col = config["score_col"]
+    period_label = f"{selected_month} {selected_year}"
+    selected_country_norm = canonical_country_norm(selected_country_name)
+
+    if period_country.empty or score_col not in period_country.columns:
+        st.info(f"No country-level health priority story data is available for {period_label}.")
+        return
+
+    agg_spec = {
+        score_col: "mean",
+        "events": "sum",
+        "population_exposure": "sum",
+    }
+    for optional_col in [
+        "events_norm",
+        "exposure_norm",
+        config["source_year_col"],
+        config["indicator_count_col"],
+    ]:
+        if optional_col in period_country.columns:
+            agg_spec[optional_col] = "mean"
+
+    story_rows = (
+        period_country.groupby(["country", "country_norm"], as_index=False)
+        .agg(agg_spec)
+        .copy()
+    )
+    for col in [score_col, "events", "population_exposure"]:
+        story_rows[col] = pd.to_numeric(story_rows[col], errors="coerce").fillna(0.0)
+    for col in [config["source_year_col"], config["indicator_count_col"], "events_norm", "exposure_norm"]:
+        if col not in story_rows.columns:
+            story_rows[col] = 0.0
+        story_rows[col] = pd.to_numeric(story_rows[col], errors="coerce").fillna(0.0)
+
+    story_rows = story_rows[story_rows[score_col] > 0].copy()
+    if story_rows.empty:
+        st.info(f"No health priority values above 0 are available for {period_label}.")
+        return
+
+    story_rows["country_label"] = story_rows["country"].astype(str).str.replace("-", " ").str.title()
+    story_rows["conflict_index"] = _story_component_index(story_rows, "events", "events_norm")
+    story_rows["health_access_weakness_index"] = _story_component_index(story_rows, score_col)
+    story_rows["exposure_index"] = _story_component_index(story_rows, "population_exposure", "exposure_norm")
+    story_rows["health_support_proxy"] = (
+        story_rows["population_exposure"].clip(lower=0) *
+        story_rows[score_col].clip(lower=0)
+    )
+
+    selected_story = story_rows[story_rows["country_norm"] == selected_country_norm].copy()
+    if selected_story.empty:
+        st.info(f"No health priority story data is available for {selected_country_name} in {period_label}.")
+        return
+    selected_story = selected_story.sort_values(
+        [score_col, "population_exposure", "events"],
+        ascending=[False, False, False],
+    ).head(1)
+
+    st.markdown(
+        '<div class="section-title" style="margin-top:36px;">'
+        '<span class="section-dot"></span>How conflict increases health needs across countries</div>',
+        unsafe_allow_html=True,
+    )
+
+    cards_html = "".join(
+        _health_country_story_card(row, score_col, config, period_label)
+        for _, row in selected_story.iterrows()
+    )
+    health_pathway_css = """
+    .health-pathway-card {
+        margin-top: 14px;
+        background: #ffffff;
+        border: 1px solid #e4e8ef;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(20, 30, 50, 0.06);
+        padding: 22px;
+    }
+    .health-pathway-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 18px;
+        border-bottom: 1px solid #eef1f6;
+        padding-bottom: 16px;
+        margin-bottom: 18px;
+    }
+    .health-pathway-eyebrow {
+        font-family: 'Inter', sans-serif;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #8893a4;
+        margin-bottom: 6px;
+    }
+    .health-pathway-title {
+        font-family: 'Playfair Display', serif;
+        font-size: 30px;
+        font-weight: 700;
+        line-height: 1.12;
+        color: #1b2230;
+        margin: 0;
+    }
+    .health-pathway-subtitle {
+        margin: 8px 0 0 0;
+        max-width: 720px;
+        font-family: 'Inter', sans-serif;
+        font-size: 13px;
+        color: #5a6577;
+        line-height: 1.7;
+    }
+    .health-pathway-score {
+        min-width: 120px;
+        text-align: right;
+    }
+    .health-pathway-score span {
+        display: block;
+        font-family: 'Inter', sans-serif;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #8893a4;
+        margin-bottom: 4px;
+    }
+    .health-pathway-score strong {
+        font-family: 'Playfair Display', serif;
+        font-size: 30px;
+        color: #5a8a82;
+    }
+    .health-pathway-flow {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin: 4px 0 18px 0;
+    }
+    .health-pathway-step {
+        position: relative;
+        min-height: 150px;
+        background: #f7f8fa;
+        border: 1px solid #e4e8ef;
+        border-radius: 8px;
+        padding: 15px;
+    }
+    .health-pathway-step:not(:last-child)::after {
+        content: "\\2192";
+        position: absolute;
+        top: 50%;
+        right: -12px;
+        transform: translateY(-50%);
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        background: #ffffff;
+        border: 1px solid #e4e8ef;
+        color: #8893a4;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: 'Inter', sans-serif;
+        font-size: 13px;
+        z-index: 2;
+    }
+    .health-pathway-step__num {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 34px;
+        height: 34px;
+        border: 1px solid;
+        border-radius: 999px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        font-weight: 600;
+        margin-bottom: 12px;
+        background: #ffffff;
+    }
+    .health-pathway-step__label {
+        font-family: 'Inter', sans-serif;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+        color: #8893a4;
+        min-height: 26px;
+    }
+    .health-pathway-step__value {
+        margin-top: 8px;
+        font-family: 'Playfair Display', serif;
+        font-size: 24px;
+        font-weight: 700;
+        line-height: 1.12;
+        color: #1b2230;
+        overflow-wrap: anywhere;
+    }
+    .health-pathway-step__note {
+        margin-top: 6px;
+        font-family: 'Inter', sans-serif;
+        font-size: 11px;
+        color: #8893a4;
+        line-height: 1.45;
+    }
+    .health-pathway-bottom {
+        display: grid;
+        grid-template-columns: 1.8fr 0.8fr;
+        gap: 14px;
+        align-items: stretch;
+        margin-bottom: 16px;
+    }
+    .health-pathway-narrative {
+        background: #eef7f5;
+        border-left: 3px solid #5a8a82;
+        border-radius: 0 8px 8px 0;
+        padding: 14px 16px;
+    }
+    .health-pathway-narrative strong {
+        display: block;
+        font-family: 'Inter', sans-serif;
+        font-size: 12px;
+        font-weight: 700;
+        color: #2e5652;
+        margin-bottom: 6px;
+    }
+    .health-pathway-narrative p {
+        margin: 0;
+        font-family: 'Inter', sans-serif;
+        font-size: 13px;
+        color: #5a6577;
+        line-height: 1.75;
+    }
+    .health-pathway-impact {
+        background: #f7f8fa;
+        border: 1px solid #e4e8ef;
+        border-radius: 8px;
+        padding: 14px 16px;
+    }
+    .health-pathway-impact span {
+        display: block;
+        font-family: 'Inter', sans-serif;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+        color: #8893a4;
+        margin-bottom: 8px;
+    }
+    .health-pathway-impact strong {
+        display: block;
+        font-family: 'Playfair Display', serif;
+        font-size: 25px;
+        line-height: 1.1;
+        color: #1b2230;
+    }
+    .health-pathway-impact em {
+        display: block;
+        margin-top: 6px;
+        font-family: 'Inter', sans-serif;
+        font-size: 11px;
+        font-style: normal;
+        color: #8893a4;
+        line-height: 1.45;
+    }
+    @media (max-width: 900px) {
+        .health-pathway-head,
+        .health-pathway-bottom {
+            grid-template-columns: 1fr;
+            flex-direction: column;
+        }
+        .health-pathway-flow {
+            grid-template-columns: 1fr;
+        }
+        .health-pathway-step:not(:last-child)::after {
+            top: auto;
+            right: 50%;
+            bottom: -12px;
+            transform: translateX(50%) rotate(90deg);
+        }
+        .health-pathway-score {
+            text-align: left;
+        }
+    }
+    """
+
+    st.markdown(f"""
+    <style>
+    {health_pathway_css}
+    .education-story-card {{
+        margin-top: 14px;
+        background: #ffffff;
+        border: 1px solid #e4e8ef;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(20, 30, 50, 0.06);
+        padding: 22px;
+    }}
+    .education-story-card__head {{
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        border-bottom: 1px solid #eef1f6;
+        padding-bottom: 16px;
+        margin-bottom: 18px;
+    }}
+    .education-story-card__eyebrow {{
+        font-family: 'Inter', sans-serif;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #8893a4;
+        margin-bottom: 6px;
+    }}
+    .education-story-card__title {{
+        font-family: 'Playfair Display', serif;
+        font-size: 28px;
+        font-weight: 700;
+        line-height: 1.12;
+        color: #1b2230;
+        margin: 0;
+    }}
+    .education-story-score {{
+        min-width: 112px;
+        text-align: right;
+    }}
+    .education-story-score span {{
+        display: block;
+        font-family: 'Inter', sans-serif;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #8893a4;
+        margin-bottom: 4px;
+    }}
+    .education-story-score strong {{
+        font-family: 'Playfair Display', serif;
+        font-size: 28px;
+        color: #a8864a;
+    }}
+    .education-story-grid {{
+        display: grid;
+        grid-template-columns: 0.88fr 1.62fr;
+        gap: 22px;
+        align-items: stretch;
+    }}
+    .education-story-visual {{
+        min-height: 270px;
+        border-radius: 8px;
+        background: linear-gradient(135deg, #f8fafc 0%, #eef1f6 100%);
+        border: 1px solid #e4e8ef;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        position: relative;
+        overflow: hidden;
+    }}
+    .education-story-visual::before {{
+        content: "";
+        position: absolute;
+        inset: 34px 30px auto 30px;
+        height: 118px;
+        border-radius: 50% 46% 54% 42%;
+        background: rgba(168, 134, 74, 0.16);
+        border: 1px solid rgba(168, 134, 74, 0.22);
+        transform: rotate(-8deg);
+    }}
+    .education-story-visual::after {{
+        content: "";
+        position: absolute;
+        width: 92px;
+        height: 92px;
+        border-radius: 50%;
+        background: rgba(44, 74, 110, 0.12);
+        border: 1px solid rgba(44, 74, 110, 0.18);
+        right: 42px;
+        top: 84px;
+    }}
+    .education-story-pin {{
+        position: relative;
+        z-index: 1;
+        width: 74px;
+        height: 74px;
+        border-radius: 50% 50% 50% 8px;
+        transform: rotate(-45deg);
+        background: #a8864a;
+        box-shadow: 0 12px 26px rgba(168, 134, 74, 0.26);
+    }}
+    .education-story-pin span {{
+        position: absolute;
+        inset: 19px;
+        border-radius: 50%;
+        background: #ffffff;
+        transform: rotate(45deg);
+    }}
+    .education-story-visual__label {{
+        position: relative;
+        z-index: 1;
+        margin-top: 26px;
+        font-family: 'Inter', sans-serif;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #5a6577;
+        text-align: center;
+    }}
+    .education-story-metrics {{
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-bottom: 16px;
+    }}
+    .education-story-metric {{
+        background: #f7f8fa;
+        border: 1px solid #e4e8ef;
+        border-radius: 8px;
+        padding: 14px 14px 13px 14px;
+    }}
+    .education-story-metric span {{
+        display: block;
+        font-family: 'Inter', sans-serif;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+        color: #8893a4;
+        margin-bottom: 7px;
+    }}
+    .education-story-metric strong {{
+        display: block;
+        font-family: 'Playfair Display', serif;
+        font-size: 24px;
+        color: #1b2230;
+        line-height: 1.05;
+    }}
+    .education-story-metric em {{
+        display: block;
+        margin-top: 5px;
+        font-family: 'Inter', sans-serif;
+        font-size: 11px;
+        font-style: normal;
+        color: #8893a4;
+        line-height: 1.4;
+    }}
+    .education-story-narrative {{
+        background: #faf5ea;
+        border-left: 3px solid #a8864a;
+        border-radius: 0 8px 8px 0;
+        padding: 14px 16px;
+        margin-bottom: 16px;
+    }}
+    .education-story-narrative strong {{
+        display: block;
+        font-family: 'Inter', sans-serif;
+        font-size: 12px;
+        font-weight: 700;
+        color: #6e5727;
+        margin-bottom: 6px;
+    }}
+    .education-story-narrative p {{
+        margin: 0;
+        font-family: 'Inter', sans-serif;
+        font-size: 13px;
+        color: #5a6577;
+        line-height: 1.75;
+    }}
+    .education-story-bars {{
+        display: grid;
+        gap: 10px;
+    }}
+    .education-story-bar__top {{
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 5px;
+        font-family: 'Inter', sans-serif;
+        font-size: 11px;
+        color: #5a6577;
+    }}
+    .education-story-bar__top strong {{
+        color: #1b2230;
+    }}
+    .education-story-bar__track {{
+        height: 9px;
+        background: #eef1f6;
+        border-radius: 999px;
+        overflow: hidden;
+    }}
+    .education-story-bar__fill {{
+        height: 100%;
+        border-radius: 999px;
+    }}
+    .education-story-source {{
+        font-family: 'Inter', sans-serif;
+        font-size: 11px;
+        color: #8893a4;
+        line-height: 1.6;
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px solid #eef1f6;
+    }}
+    .health-story-card .education-story-score strong {{
+        color: #5a8a82;
+    }}
+    .health-story-visual::before {{
+        background: rgba(90, 138, 130, 0.16);
+        border-color: rgba(90, 138, 130, 0.22);
+    }}
+    .health-story-visual::after {{
+        background: rgba(44, 74, 110, 0.12);
+        border-color: rgba(44, 74, 110, 0.18);
+    }}
+    .health-story-pin {{
+        background: #5a8a82;
+        box-shadow: 0 12px 26px rgba(90, 138, 130, 0.26);
+    }}
+    .health-story-narrative {{
+        background: #eef7f5;
+        border-left-color: #5a8a82;
+    }}
+    .health-story-narrative strong {{
+        color: #2e5652;
+    }}
+    @media (max-width: 900px) {{
+        .education-story-grid,
+        .education-story-metrics {{
+            grid-template-columns: 1fr;
+        }}
+        .education-story-card__head {{
+            flex-direction: column;
+        }}
+        .education-story-score {{
+            text-align: left;
+        }}
+    }}
+    </style>
+    {cards_html}
+    <div style="font-family:'Inter',sans-serif;font-size:11px;color:#8893a4;line-height:1.6;margin-top:8px;">
+      Showing the health story for {escape(selected_country_name)} in {escape(period_label)}. Health proxies reuse the processed World Bank health indicators already in the priority dataset.
+    </div>
+    """, unsafe_allow_html=True)
+
+
 def render_service_priority_story(selected_country_name, selected_year, selected_month, priority_mode):
     config = SERVICE_PRIORITY_STORY.get(priority_mode)
     if not config:
@@ -3652,6 +4334,16 @@ def render_service_priority_story(selected_country_name, selected_year, selected
     if priority_mode == "Education Priority":
         period_country = _priority_period_slice(country_priority, selected_year, selected_month)
         render_education_priority_country_story(
+            period_country,
+            selected_country_name,
+            selected_year,
+            selected_month,
+            config,
+        )
+        return
+    if priority_mode == "Health Priority":
+        period_country = _priority_period_slice(country_priority, selected_year, selected_month)
+        render_health_priority_country_story(
             period_country,
             selected_country_name,
             selected_year,
@@ -6950,6 +7642,14 @@ else:
         """, unsafe_allow_html=True)
 
         cscale = SCALE_BLUE if selected_metric == "events" else SCALE_WARM if selected_metric == "fatalities" else SCALE_GOLD
+        merged["_hover_html"] = build_nonzero_hover_text(
+            merged,
+            [
+                ("events", "Events", "count"),
+                ("fatalities", "Fatalities", "count"),
+                ("population_exposure", "Population exposure", "count"),
+            ],
+        )
 
         fig = px.choropleth_mapbox(
             merged,
@@ -6959,10 +7659,7 @@ else:
             color=selected_metric,
             color_continuous_scale=cscale,
             hover_name="admin_name",
-            hover_data={
-                "events":True,"fatalities":True,"population_exposure":True,
-                "admin_name_norm":False,
-            },
+            custom_data=["admin_name", "_hover_html"],
             mapbox_style="carto-positron",
             center=build_mapbox_center(merged),
             zoom=build_mapbox_zoom(merged, base_zoom=5.0, max_zoom=8.4),
@@ -6978,6 +7675,9 @@ else:
                 title_font=dict(family="Inter", size=11, color="#1b2230"),
             )
         )
+        fig.update_traces(
+            hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]}<extra></extra>"
+        )
         if has_country_admin2:
             _country_drilldown = st.session_state.get("country_admin1_drilldown")
             st.session_state["country_map_level"] = "admin2" if _country_drilldown else "admin1"
@@ -6988,12 +7688,6 @@ else:
                     if not _a1_match.empty
                     else _country_drilldown.replace("-", " ").title()
                 )
-                st.markdown(
-                    f'<div style="font-family:Inter,sans-serif;font-size:13px;color:#5a6577;'
-                    f'margin-bottom:10px;padding:8px 14px;background:#eef1f6;border-radius:8px;">'
-                    f'Viewing districts inside <strong style="color:#1b2230;">{_admin1_display}</strong></div>',
-                    unsafe_allow_html=True,
-                )
                 _admin2_gdf, _estimated, _estimate_note = build_country_admin2_conflict_view(
                     country_admin2_boundary,
                     selected_country_name,
@@ -7002,8 +7696,6 @@ else:
                     selected_month,
                     selected_event_type,
                 )
-                if _estimated and _estimate_note:
-                    st.info(_estimate_note)
                 if _admin2_gdf.empty:
                     st.warning(f"No admin2 boundary data found for {_admin1_display}.")
                 if "district_estimation_note" not in _admin2_gdf.columns:
@@ -7012,6 +7704,20 @@ else:
                     _admin2_gdf["district_estimation_note"] = _admin2_gdf["district_estimation_note"].fillna("")
                 _detail_metric = selected_metric if selected_metric in {"events", "fatalities", "population_exposure"} else "events"
                 _detail_scale = SCALE_BLUE if _detail_metric == "events" else SCALE_WARM if _detail_metric == "fatalities" else SCALE_GOLD
+                _admin2_gdf["_hover_html"] = build_nonzero_hover_text(
+                    _admin2_gdf,
+                    [
+                        ("events", "Events", "count"),
+                        ("fatalities", "Fatalities", "count"),
+                        ("population_exposure", "Population exposure", "count"),
+                    ],
+                    [
+                        ("has_acled_data_label", "ACLED district data"),
+                        ("acled_data_note", "District data note"),
+                        ("acled_match_status", "Match method"),
+                        ("district_estimation_note", "Estimate note"),
+                    ],
+                )
                 _fig2 = px.choropleth_mapbox(
                     _admin2_gdf,
                     geojson=json.loads(_admin2_gdf.to_json()),
@@ -7020,16 +7726,7 @@ else:
                     color=_detail_metric,
                     color_continuous_scale=_detail_scale,
                     hover_name="admin2_label",
-                    hover_data={
-                        "has_acled_data_label": True,
-                        "acled_data_note": True,
-                        "acled_match_status": True,
-                        "events": True,
-                        "fatalities": True,
-                        "population_exposure": True,
-                        "district_estimation_note": True,
-                        "admin2_norm": False,
-                    },
+                    custom_data=["admin2_label", "_hover_html"],
                     mapbox_style="carto-positron",
                     center=build_mapbox_center(_admin2_gdf),
                     zoom=build_mapbox_zoom(_admin2_gdf, base_zoom=6.6, max_zoom=9.8),
@@ -7051,6 +7748,9 @@ else:
                         tickfont=dict(family="Inter", size=10, color="#5a6577"),
                         title_font=dict(family="Inter", size=11, color="#1b2230"),
                     ),
+                )
+                _fig2.update_traces(
+                    hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]}<extra></extra>"
                 )
                 st.plotly_chart(_fig2, use_container_width=True, key="country_conflict_map")
                 st.markdown(
@@ -7233,12 +7933,6 @@ else:
         """, unsafe_allow_html=True)
 
         render_country_need_detail(selected_country_name, selected_country_priority_row)
-        if selected_metric in {"health_priority_score", "education_priority_score"}:
-            if selected_metric not in priority_slice.columns or float(pd.to_numeric(priority_slice.get(selected_metric, pd.Series(dtype="float64")), errors="coerce").fillna(0).sum()) <= 0:
-                st.info(
-                    f"Admin1 {metric_label(selected_metric).lower()} values are not available for this country-period. "
-                    "The map uses the country-level score as a fallback while the story section shows the available comparison context."
-                )
 
         if selected_metric in ["priority_score_country", "priority_score_global", "health_priority_score", "education_priority_score"]:
             cscale = SCALE_BLUE
@@ -7253,21 +7947,21 @@ else:
             cscale = SCALE_TEAL
             fmt_fn = fmt_big
 
-        priority_hover_data = {
-            "events": True,
-            "fatalities": True,
-            "population_exposure": True,
-            "priority_score_country": ":.3f",
-            "priority_score_global": ":.3f",
-            "health_priority_score": ":.3f",
-            "education_priority_score": ":.3f",
-            "admin_name_norm": False,
-        }
+        priority_hover_metrics = [
+            ("events", "Events", "count"),
+            ("fatalities", "Fatalities", "count"),
+            ("population_exposure", "Population exposure", "count"),
+            ("priority_score_country", "Country priority", "score"),
+            ("priority_score_global", "Global priority", "score"),
+            ("health_priority_score", "Health priority", "score"),
+            ("education_priority_score", "Education priority", "score"),
+        ]
         if selected_metric == "displaced":
-            priority_hover_data.update({
-                "displaced": True,
-                "displaced_in": True,
-            })
+            priority_hover_metrics.extend([
+                ("displaced", "Displaced", "count"),
+                ("displaced_in", "Displaced in", "count"),
+            ])
+        merged["_hover_html"] = build_nonzero_hover_text(merged, priority_hover_metrics)
 
         fig = px.choropleth_mapbox(
             merged,
@@ -7277,7 +7971,7 @@ else:
             color=selected_metric,
             color_continuous_scale=cscale,
             hover_name="admin_name",
-            hover_data=priority_hover_data,
+            custom_data=["admin_name", "_hover_html"],
             mapbox_style="carto-positron",
             center=build_mapbox_center(merged),
             zoom=build_mapbox_zoom(merged, base_zoom=5.0, max_zoom=8.4),
@@ -7293,6 +7987,9 @@ else:
                 title_font=dict(family="Inter", size=11, color="#1b2230"),
             )
         )
+        fig.update_traces(
+            hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]}<extra></extra>"
+        )
         if has_country_admin2:
             _country_drilldown = st.session_state.get("country_admin1_drilldown")
             st.session_state["country_map_level"] = "admin2" if _country_drilldown else "admin1"
@@ -7303,12 +8000,6 @@ else:
                     if not _a1_match.empty
                     else _country_drilldown.replace("-", " ").title()
                 )
-                st.markdown(
-                    f'<div style="font-family:Inter,sans-serif;font-size:13px;color:#5a6577;'
-                    f'margin-bottom:10px;padding:8px 14px;background:#eef1f6;border-radius:8px;">'
-                    f'Viewing districts inside <strong style="color:#1b2230;">{_admin1_display}</strong></div>',
-                    unsafe_allow_html=True,
-                )
                 _admin1_row = merged[merged["admin_name_norm"] == _country_drilldown].copy()
                 _admin2_gdf, _estimated, _estimate_note = build_country_admin2_priority_view(
                     country_admin2_boundary,
@@ -7318,8 +8009,6 @@ else:
                     selected_month,
                     _admin1_row,
                 )
-                if _estimated and _estimate_note:
-                    st.info(_estimate_note)
                 if _admin2_gdf.empty:
                     st.warning(f"No admin2 boundary data found for {_admin1_display}.")
                 if selected_metric == "priority_score_global" and "priority_score_global" in _admin2_gdf.columns:
@@ -7386,23 +8075,27 @@ else:
                     _admin2_gdf["displaced"] > 0,
                     _admin2_gdf["displaced_in"],
                 )
-                _admin2_hover_data = {
-                    "priority_score": ":.3f",
-                    "health_priority_score": ":.3f",
-                    "education_priority_score": ":.3f",
-                    "priority_rank": True,
-                    "events": True,
-                    "fatalities": True,
-                    "population_exposure": True,
-                    "district_estimation_note": True,
-                    "admin2_norm": False,
-                }
+                _admin2_hover_metrics = [
+                    ("priority_score", "Priority score", "score"),
+                    ("health_priority_score", "Health priority", "score"),
+                    ("education_priority_score", "Education priority", "score"),
+                    ("priority_rank", "Priority rank", "rank"),
+                    ("events", "Events", "count"),
+                    ("fatalities", "Fatalities", "count"),
+                    ("population_exposure", "Population exposure", "count"),
+                ]
+                _admin2_hover_notes = [("district_estimation_note", "Estimate note")]
                 if selected_metric == "displaced" or _detail_metric == "displaced_in":
-                    _admin2_hover_data.update({
-                        "displaced": True,
-                        "displaced_in": True,
-                        "displacement_data_note": True,
-                    })
+                    _admin2_hover_metrics.extend([
+                        ("displaced", "Displaced", "count"),
+                        ("displaced_in", "Displaced in", "count"),
+                    ])
+                    _admin2_hover_notes.append(("displacement_data_note", "Displacement note"))
+                _admin2_gdf["_hover_html"] = build_nonzero_hover_text(
+                    _admin2_gdf,
+                    _admin2_hover_metrics,
+                    _admin2_hover_notes,
+                )
                 _fig2 = px.choropleth_mapbox(
                     _admin2_gdf,
                     geojson=json.loads(_admin2_gdf.to_json()),
@@ -7411,7 +8104,7 @@ else:
                     color=_detail_metric,
                     color_continuous_scale=_detail_scale,
                     hover_name="admin2_label",
-                    hover_data=_admin2_hover_data,
+                    custom_data=["admin2_label", "_hover_html"],
                     mapbox_style="carto-positron",
                     center=build_mapbox_center(_admin2_gdf),
                     zoom=build_mapbox_zoom(_admin2_gdf, base_zoom=6.6, max_zoom=9.8),
@@ -7426,6 +8119,9 @@ else:
                         tickfont=dict(family="Inter", size=10, color="#5a6577"),
                         title_font=dict(family="Inter", size=11, color="#1b2230"),
                     ),
+                )
+                _fig2.update_traces(
+                    hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]}<extra></extra>"
                 )
                 if _detail_metric in {"priority_score", "priority_score_global"}:
                     _fig2.update_layout(
