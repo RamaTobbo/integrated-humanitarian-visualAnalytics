@@ -760,9 +760,15 @@ def ensure_required_files():
         st.stop()
 
 def filter_event_type(df, selected):
-    if selected == "All":
+    if "event_type" not in df.columns:
         return df.copy()
-    return df[df["event_type"] == selected].copy()
+
+    selected_norm = str(selected or "All").strip().lower()
+    event_norm = df["event_type"].astype(str).str.strip().str.lower()
+    if selected_norm == "all":
+        all_rows = df[event_norm == "all"].copy()
+        return all_rows if not all_rows.empty else df.copy()
+    return df[event_norm == selected_norm].copy()
 
 def repair_geometries(gdf):
     gdf = gdf.copy()
@@ -6235,9 +6241,9 @@ if st.session_state["view"] == "world":
         avail_et = (
             base_df[(base_df["year"] == selected_year) &
                     (base_df["month"].str.lower() == selected_month.lower())]
-            ["event_type"].dropna().drop_duplicates().sort_values().tolist()
+            ["event_type"].dropna().astype(str).str.strip().drop_duplicates().sort_values().tolist()
         )
-        avail_et = ["All"] + avail_et
+        avail_et = ["All"] + [event_type for event_type in avail_et if event_type.lower() != "all"]
         selected_et = st.sidebar.selectbox(
             "Event Type",
             avail_et,
@@ -6349,8 +6355,10 @@ if st.session_state["view"] == "world":
                     "selected_iso3":resolved_iso3,
                     "selected_country_name":resolved_name,
                     "view":"country",
-                    "country_year":None,
-                    "country_month":None,
+                    "country_year":selected_year,
+                    "country_month":selected_month,
+                    "country_event_type":selected_et,
+                    "country_metric":metric,
                     "country_admin1_drilldown": None,
                     "country_map_level": "admin1",
                 })
@@ -6399,8 +6407,10 @@ if st.session_state["view"] == "world":
                     "selected_iso3":resolved_iso3,
                     "selected_country_name":resolved_name,
                     "view":"country",
-                    "country_year":None,
-                    "country_month":None,
+                    "country_year":selected_year,
+                    "country_month":selected_month,
+                    "country_event_type":selected_et,
+                    "country_metric":metric,
                     "country_admin1_drilldown": None,
                     "country_map_level": "admin1",
                 })
@@ -6491,6 +6501,19 @@ if st.session_state["view"] == "world":
         """, unsafe_allow_html=True)
 
         cscale = SCALE_BLUE if is_score_metric(metric) else SCALE_WARM if metric == "fatalities" else SCALE_TEAL if metric == "displaced" else SCALE_GOLD if metric == "population_exposure" else SCALE_BLUE
+        world_priority_hover_data = {
+            "country": True,
+            "events": True,
+            "fatalities": True,
+            "population_exposure": True,
+            "country_priority_score": ":.3f",
+            "health_priority_score": ":.3f",
+            "education_priority_score": ":.3f",
+            "iso_n3": False,
+            "iso_a3": False,
+        }
+        if metric == "displaced":
+            world_priority_hover_data["displaced"] = True
 
         if selected_country == "All":
             fig = px.choropleth_mapbox(
@@ -6501,14 +6524,7 @@ if st.session_state["view"] == "world":
                 color=metric,
                 color_continuous_scale=cscale,
                 hover_name="country_name_geo",
-                hover_data={
-                    "country":True,"events":True,"fatalities":True,
-                    "displaced":True,"population_exposure":True,
-                    "country_priority_score":":.3f",
-                    "health_priority_score":":.3f",
-                    "education_priority_score":":.3f",
-                    "iso_n3":False,"iso_a3":False
-                },
+                hover_data=world_priority_hover_data,
                 custom_data=["iso_a3","country_name_geo"],
                 mapbox_style="carto-positron",
                 zoom=0.8,
@@ -6540,8 +6556,8 @@ if st.session_state["view"] == "world":
                     "selected_iso3":resolved_iso3,
                     "selected_country_name":resolved_name,
                     "view":"country",
-                    "country_year":None,
-                    "country_month":None,
+                    "country_year":selected_year,
+                    "country_month":selected_month,
                     "country_admin1_drilldown": None,
                     "country_map_level": "admin1",
                 })
@@ -6556,14 +6572,7 @@ if st.session_state["view"] == "world":
                 color=metric,
                 color_continuous_scale=cscale,
                 hover_name="country_name_geo",
-                hover_data={
-                    "country":True,"events":True,"fatalities":True,
-                    "displaced":True,"population_exposure":True,
-                    "country_priority_score":":.3f",
-                    "health_priority_score":":.3f",
-                    "education_priority_score":":.3f",
-                    "iso_n3":False,"iso_a3":False
-                },
+                hover_data=world_priority_hover_data,
                 custom_data=["iso_a3","country_name_geo"],
                 mapbox_style="carto-positron",
                 zoom=build_mapbox_zoom(sgeo, base_zoom=3.2, max_zoom=7.2),
@@ -6594,8 +6603,8 @@ if st.session_state["view"] == "world":
                     "selected_iso3":resolved_iso3,
                     "selected_country_name":resolved_name,
                     "view":"country",
-                    "country_year":None,
-                    "country_month":None,
+                    "country_year":selected_year,
+                    "country_month":selected_month,
                     "country_admin1_drilldown": None,
                     "country_map_level": "admin1",
                 })
@@ -6841,14 +6850,17 @@ else:
             (country_conflict_country_rows["month"].str.lower() == selected_month.lower())
         ].copy()
         event_type_values = []
+        event_type_value_keys = set()
         for source_df in (conflict_period_rows, country_conflict_period_rows):
             if source_df.empty or "event_type" not in source_df.columns:
                 continue
             for event_type in source_df["event_type"].dropna().astype(str).str.strip().tolist():
-                if not event_type or event_type.lower() == "nan" or event_type in event_type_values:
+                event_type_key = event_type.lower()
+                if not event_type or event_type_key == "nan" or event_type_key in event_type_value_keys:
                     continue
+                event_type_value_keys.add(event_type_key)
                 event_type_values.append(event_type)
-        avail_event_types = ["All"] + sorted([event_type for event_type in event_type_values if event_type != "All"])
+        avail_event_types = ["All"] + sorted([event_type for event_type in event_type_values if event_type.lower() != "all"])
 
         selected_event_type = st.sidebar.selectbox(
             "Event Type",
@@ -6866,16 +6878,7 @@ else:
         )
         st.session_state["country_metric"] = selected_metric
 
-        if selected_event_type == "All":
-            _map_slice = conflict_period_rows[
-                conflict_period_rows["event_type"].astype(str).str.strip() == "All"
-            ].copy()
-            if _map_slice.empty:
-                _map_slice = conflict_period_rows.copy()
-        else:
-            _map_slice = conflict_period_rows[
-                conflict_period_rows["event_type"].astype(str).str.strip() == selected_event_type
-            ].copy()
+        _map_slice = filter_event_type(conflict_period_rows, selected_event_type)
 
         if not _map_slice.empty and "admin1" in _map_slice.columns:
             _map_slice = _map_slice.copy()
@@ -7250,6 +7253,22 @@ else:
             cscale = SCALE_TEAL
             fmt_fn = fmt_big
 
+        priority_hover_data = {
+            "events": True,
+            "fatalities": True,
+            "population_exposure": True,
+            "priority_score_country": ":.3f",
+            "priority_score_global": ":.3f",
+            "health_priority_score": ":.3f",
+            "education_priority_score": ":.3f",
+            "admin_name_norm": False,
+        }
+        if selected_metric == "displaced":
+            priority_hover_data.update({
+                "displaced": True,
+                "displaced_in": True,
+            })
+
         fig = px.choropleth_mapbox(
             merged,
             geojson=json.loads(merged.to_json()),
@@ -7258,15 +7277,7 @@ else:
             color=selected_metric,
             color_continuous_scale=cscale,
             hover_name="admin_name",
-            hover_data={
-                "events":True,"fatalities":True,"displaced":True,
-                "population_exposure":True,"priority_score_country":":.3f",
-                "priority_score_global":":.3f",
-                "health_priority_score":":.3f",
-                "education_priority_score":":.3f",
-                "displaced_in":True,
-                "admin_name_norm":False,
-            },
+            hover_data=priority_hover_data,
             mapbox_style="carto-positron",
             center=build_mapbox_center(merged),
             zoom=build_mapbox_zoom(merged, base_zoom=5.0, max_zoom=8.4),
@@ -7375,6 +7386,23 @@ else:
                     _admin2_gdf["displaced"] > 0,
                     _admin2_gdf["displaced_in"],
                 )
+                _admin2_hover_data = {
+                    "priority_score": ":.3f",
+                    "health_priority_score": ":.3f",
+                    "education_priority_score": ":.3f",
+                    "priority_rank": True,
+                    "events": True,
+                    "fatalities": True,
+                    "population_exposure": True,
+                    "district_estimation_note": True,
+                    "admin2_norm": False,
+                }
+                if selected_metric == "displaced" or _detail_metric == "displaced_in":
+                    _admin2_hover_data.update({
+                        "displaced": True,
+                        "displaced_in": True,
+                        "displacement_data_note": True,
+                    })
                 _fig2 = px.choropleth_mapbox(
                     _admin2_gdf,
                     geojson=json.loads(_admin2_gdf.to_json()),
@@ -7383,19 +7411,7 @@ else:
                     color=_detail_metric,
                     color_continuous_scale=_detail_scale,
                     hover_name="admin2_label",
-                    hover_data={
-                        "priority_score": ":.3f",
-                        "health_priority_score": ":.3f",
-                        "education_priority_score": ":.3f",
-                        "priority_rank": True,
-                        "events": True,
-                        "fatalities": True,
-                        "population_exposure": True,
-                        "displaced": True,
-                        "displaced_in": True,
-                        "district_estimation_note": True,
-                        "admin2_norm": False,
-                    },
+                    hover_data=_admin2_hover_data,
                     mapbox_style="carto-positron",
                     center=build_mapbox_center(_admin2_gdf),
                     zoom=build_mapbox_zoom(_admin2_gdf, base_zoom=6.6, max_zoom=9.8),
