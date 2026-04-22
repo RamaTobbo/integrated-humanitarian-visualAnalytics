@@ -19,6 +19,7 @@ from lebanon_displacement_fallback import (
     ensure_displacement_metadata,
     summarize_country_months,
 )
+from idmc_fallback import apply_idmc_fallback, load_idmc_displacement
 
 # ==================================================
 # PATHS
@@ -187,6 +188,11 @@ def make_priority_class(series):
             return "low"
 
     return series.apply(classify)
+
+# ==================================================
+# LOAD IDMC FALLBACK DATA
+# ==================================================
+idmc_displacement = load_idmc_displacement()  # no year filter — latest year used as fallback
 
 # ==================================================
 # LOAD ACLED FILES
@@ -538,6 +544,23 @@ country_monthly["displaced"] = country_monthly["displaced"].fillna(0)
 country_monthly["displaced_in"] = country_monthly["displaced_in"].fillna(0)
 country_monthly = ensure_displacement_metadata(country_monthly)
 
+# Apply IDMC annual stock as fallback for countries with no IOM DTM data.
+# Sets displacement_source: "event" | "idmc" | "none"
+country_monthly = apply_idmc_fallback(
+    country_monthly,
+    idmc_displacement,
+    displaced_col="displaced",
+    source_col="displacement_source",
+    source_note_col=DISPLACEMENT_SOURCE_NOTE_COL,
+)
+# Mirror displacement back to displaced_in for rows filled from IDMC
+# (IDMC is country-level only; displaced_in tracks destination admin1 which
+#  isn't available, so we carry the same figure to keep totals consistent)
+idmc_rows = country_monthly["displacement_source"] == "idmc"
+country_monthly.loc[idmc_rows, "displaced_in"] = (
+    country_monthly.loc[idmc_rows, "displaced"]
+)
+
 country_monthly["events_log"] = np.log1p(country_monthly["events"])
 country_monthly["fatalities_log"] = np.log1p(country_monthly["fatalities"])
 country_monthly["exposure_log"] = np.log1p(country_monthly["population_exposure"])
@@ -615,6 +638,7 @@ country_monthly = country_monthly[
         "population_exposure",
         "displaced",
         "displaced_in",
+        "displacement_source",
         DISPLACEMENT_ADJUSTED_FLAG_COL,
         DISPLACEMENT_SOURCE_NOTE_COL,
         "events_log",

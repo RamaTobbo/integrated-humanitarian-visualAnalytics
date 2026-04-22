@@ -6727,7 +6727,7 @@ else:
             Each circle represents one admin1 area.
             <strong>Size</strong> reflects displaced people in {story_snapshot_label}.
             <strong>Color</strong> shows the priority score for the same snapshot where available.
-            Values use that same snapshot month rather than summing all months together.
+            
           </p>
           <p style="font-family:'Inter',sans-serif;font-size:12px;color:#8893a4;line-height:1.6;margin:0;">
             Snapshot month: <strong style="color:#1b2230;">{story_snapshot_label}</strong>.
