@@ -159,18 +159,148 @@ def validate_hierarchy_totals(parent_frame, child_frame, key_cols, metric_cols, 
     return not mismatches
 
 
+ESTIMATED_DISTRICT_NOTE = "Estimated from governorate totals using district-level weights"
+INTEGER_RECONCILE_METRICS = {
+    "events",
+    "fatalities",
+    "population_exposure",
+    "displaced",
+    "displaced_in",
+    "displaced_out",
+}
+
+
+def _normalize_positive(series):
+    numeric = pd.to_numeric(series, errors="coerce").fillna(0).clip(lower=0)
+    max_value = float(numeric.max()) if len(numeric) else 0.0
+    if max_value <= 0:
+        return pd.Series(0.0, index=numeric.index, dtype="float64")
+    return numeric / max_value
+
+
+def _weighted_signal(frame, candidates, weight):
+    signal = pd.Series(0.0, index=frame.index, dtype="float64")
+    found = False
+    for col in candidates:
+        if col not in frame.columns:
+            continue
+        normalized = _normalize_positive(frame[col])
+        if float(normalized.sum()) <= 0:
+            continue
+        signal = signal + normalized
+        found = True
+    if not found:
+        return pd.Series(0.0, index=frame.index, dtype="float64")
+    return weight * _normalize_positive(signal)
+
+
 def allocation_weights(frame, preferred_cols=None):
-    preferred_cols = preferred_cols or ["events", "fatalities", "population_exposure", "displaced_in", "displaced"]
+    """Build varied district allocation weights from normalized signals.
+
+    Equal split is only used after conflict, fatality, displacement, exposure,
+    priority, vulnerability, population, and area proxies are all unavailable.
+    """
+    if frame is None or len(frame) == 0:
+        return pd.Series(dtype="float64")
+
+    if preferred_cols:
+        weights = pd.Series(0.0, index=frame.index, dtype="float64")
+        for item in preferred_cols:
+            if isinstance(item, (tuple, list)) and len(item) == 2:
+                col, multiplier = item
+            else:
+                col, multiplier = item, 1.0
+            if col in frame.columns:
+                weights = weights + _normalize_positive(frame[col]) * float(multiplier)
+        if float(weights.sum()) > 0:
+            return weights
+
+    signal_groups = [
+        (("events", "events_basis", "conflict_events", "direct_match_count", "spatial_match_count"), 0.40),
+        (("fatalities", "fatalities_basis", "fatality_count"), 0.25),
+        (("population_exposure", "population_exposure_basis", "population", "population_best"), 0.20),
+        (("displaced_in", "displaced", "displaced_basis", "displacement", "idps"), 0.15),
+        (
+            (
+                "priority_score",
+                "priority_score_country",
+                "priority_score_global",
+                "access_risk",
+                "demographic_vulnerability",
+                "health_priority_score",
+                "education_priority_score",
+            ),
+            0.10,
+        ),
+    ]
     weights = pd.Series(0.0, index=frame.index, dtype="float64")
-    for col in preferred_cols:
-        if col in frame.columns:
-            weights = weights + numeric_series(frame, col).clip(lower=0)
-    if len(weights) and float(weights.sum()) <= 0:
-        weights = pd.Series(1.0, index=frame.index, dtype="float64")
-    return weights
+    for candidates, weight in signal_groups:
+        weights = weights + _weighted_signal(frame, candidates, weight)
+    if float(weights.sum()) > 0:
+        return weights
+
+    area_signal = _weighted_signal(
+        frame,
+        ("area_sqkm", "area_km2", "area_weight", "geometry_area", "shape_area"),
+        1.0,
+    )
+    if float(area_signal.sum()) > 0:
+        return area_signal
+
+    return pd.Series(1.0, index=frame.index, dtype="float64")
 
 
-def allocate_difference(total_value, current_values, weights):
+def allocate_total_by_weights(total_value, weights, integer=False):
+    weights = pd.to_numeric(weights, errors="coerce").fillna(0).clip(lower=0)
+    if len(weights) == 0:
+        return weights
+
+    if float(weights.sum()) <= 0:
+        weights = pd.Series(1.0, index=weights.index, dtype="float64")
+    shares = weights / float(weights.sum())
+
+    if integer:
+        total_int = int(round(float(total_value or 0)))
+        if total_int <= 0:
+            return pd.Series(0, index=weights.index, dtype="int64")
+        raw = shares * total_int
+        allocated = raw.astype(int)
+        remainder = total_int - int(allocated.sum())
+        if remainder > 0:
+            fractions = (raw - allocated).sort_values(ascending=False)
+            for idx in fractions.index[:remainder]:
+                allocated.loc[idx] += 1
+        return allocated.astype("int64")
+
+    total_float = float(total_value or 0)
+    if total_float <= 0:
+        return pd.Series(0.0, index=weights.index, dtype="float64")
+    return shares * total_float
+
+
+def _allocate_difference_integer(total_value, current_values, weights):
+    total_int = int(round(float(total_value or 0)))
+    current = pd.to_numeric(current_values, errors="coerce").fillna(0).clip(lower=0).round().astype("int64")
+    if len(current) == 0:
+        return current
+    if total_int <= 0:
+        return pd.Series(0, index=current.index, dtype="int64")
+
+    current_sum = int(current.sum())
+    if current_sum == total_int:
+        return current
+    if current_sum > total_int:
+        scale_weights = current if current_sum > 0 else weights
+        return allocate_total_by_weights(total_int, scale_weights, integer=True)
+
+    diff = total_int - current_sum
+    return (current + allocate_total_by_weights(diff, weights, integer=True)).astype("int64")
+
+
+def allocate_difference(total_value, current_values, weights, integer=False):
+    if integer:
+        return _allocate_difference_integer(total_value, current_values, weights)
+
     total_value = float(total_value or 0)
     current = pd.to_numeric(current_values, errors="coerce").fillna(0).clip(lower=0)
     current_sum = float(current.sum())
@@ -186,23 +316,88 @@ def allocate_difference(total_value, current_values, weights):
     weights = pd.to_numeric(weights, errors="coerce").fillna(0).clip(lower=0)
     if float(weights.sum()) <= 0:
         weights = pd.Series(1.0, index=current.index)
-    return current + (weights / float(weights.sum())) * diff
+    return current + allocate_total_by_weights(diff, weights, integer=False)
 
 
-def reconcile_children_to_parent(child_frame, parent_values, metric_cols, source_col="district_value_source"):
+def _metric_weight_columns(metric):
+    return {
+        "events": [
+            ("events", 0.45),
+            ("events_basis", 0.45),
+            ("fatalities", 0.20),
+            ("population_exposure", 0.15),
+            ("displaced_in", 0.10),
+            ("displaced", 0.10),
+            ("area_sqkm", 0.05),
+        ],
+        "fatalities": [
+            ("fatalities", 0.45),
+            ("fatalities_basis", 0.45),
+            ("events", 0.25),
+            ("events_basis", 0.25),
+            ("population_exposure", 0.15),
+            ("area_sqkm", 0.05),
+        ],
+        "population_exposure": [
+            ("population_exposure", 0.45),
+            ("population_exposure_basis", 0.45),
+            ("population", 0.25),
+            ("events", 0.15),
+            ("fatalities", 0.10),
+            ("area_sqkm", 0.10),
+        ],
+        "displaced": [
+            ("displaced", 0.35),
+            ("displaced_in", 0.35),
+            ("events", 0.25),
+            ("fatalities", 0.20),
+            ("population_exposure", 0.15),
+            ("area_sqkm", 0.05),
+        ],
+        "displaced_in": [
+            ("displaced_in", 0.35),
+            ("displaced", 0.35),
+            ("events", 0.25),
+            ("fatalities", 0.20),
+            ("population_exposure", 0.15),
+            ("area_sqkm", 0.05),
+        ],
+    }.get(metric)
+
+
+def reconcile_children_to_parent(
+    child_frame,
+    parent_values,
+    metric_cols,
+    source_col="district_value_source",
+    integer_metrics=None,
+):
     out = ensure_numeric_columns(child_frame, metric_cols)
-    weights = allocation_weights(out)
+    integer_metrics = set(INTEGER_RECONCILE_METRICS if integer_metrics is None else integer_metrics)
     estimated = False
     for metric in metric_cols:
         parent_total = float(parent_values.get(metric, 0) or 0)
         if parent_total <= 0:
             continue
         before = float(out[metric].sum())
-        out[metric] = allocate_difference(parent_total, out[metric], weights)
-        after = float(out[metric].sum())
-        if abs(before - after) > 1e-6 or abs(after - parent_total) <= 1e-6:
+        metric_weights = allocation_weights(out, preferred_cols=_metric_weight_columns(metric))
+        out[metric] = allocate_difference(
+            parent_total,
+            out[metric],
+            metric_weights,
+            integer=metric in integer_metrics,
+        )
+        after = float(pd.to_numeric(out[metric], errors="coerce").fillna(0).sum())
+        if abs(before - after) > 1e-6:
             estimated = True
     if estimated:
-        out[source_col] = out.get(source_col, "Estimated from parent total")
-        out[source_col] = out[source_col].fillna("Estimated from parent total")
+        if source_col not in out.columns:
+            out[source_col] = ESTIMATED_DISTRICT_NOTE
+        else:
+            out[source_col] = out[source_col].fillna(ESTIMATED_DISTRICT_NOTE)
+            empty = out[source_col].astype(str).str.strip().eq("")
+            out.loc[empty, source_col] = ESTIMATED_DISTRICT_NOTE
+        out["district_estimation_note"] = ESTIMATED_DISTRICT_NOTE
+    elif "district_estimation_note" not in out.columns:
+        out["district_estimation_note"] = ""
     return out, estimated

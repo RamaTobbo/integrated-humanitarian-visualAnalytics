@@ -708,6 +708,18 @@ def repair_geometries(gdf):
     gdf = gdf[~gdf.geometry.is_empty].copy()
     return gdf
 
+def add_area_proxy(gdf):
+    gdf = gdf.copy()
+    if "area_sqkm" in gdf.columns:
+        gdf["area_sqkm"] = pd.to_numeric(gdf["area_sqkm"], errors="coerce").fillna(0).clip(lower=0)
+        return gdf
+    try:
+        area = gdf.to_crs(epsg=3857).geometry.area / 1_000_000
+        gdf["area_sqkm"] = pd.to_numeric(area, errors="coerce").fillna(0).clip(lower=0)
+    except Exception:
+        gdf["area_sqkm"] = 0.0
+    return gdf
+
 def detect_name_column(gdf):
     for col in ["shapeName","shapeName_en","admin1Name","ADM1_EN","adm1_en",
                 "NAME_1","name_1","province","region","state","admin1","name"]:
@@ -1020,19 +1032,7 @@ def _fallback_priority_score(frame):
     return score / active_weight
 
 def district_signal_weights(frame):
-    weights = pd.Series(0.0, index=frame.index, dtype="float64")
-    for col, multiplier in [
-        ("events", 1.0),
-        ("fatalities", 1.0),
-        ("population_exposure", 0.35),
-        ("displaced_in", 0.75),
-        ("displaced", 0.75),
-    ]:
-        if col in frame.columns:
-            weights = weights + multiplier * _coerce_col(frame, col)
-    if len(weights) and float(weights.sum()) <= 0:
-        weights = pd.Series(1.0, index=frame.index, dtype="float64")
-    return weights
+    return hierarchy.allocation_weights(frame)
 
 def compute_admin2_priority_scores(frame):
     frame = ensure_numeric_columns(
@@ -1210,7 +1210,7 @@ def build_lebanon_admin2_conflict_view(admin1_norm, selected_year, selected_mont
             selected_event_type,
         )
 
-        exact = boundary[["admin2_norm"]].drop_duplicates().copy()
+        exact = boundary[[col for col in ["admin2_norm", "area_sqkm"] if col in boundary.columns]].drop_duplicates(subset=["admin2_norm"]).copy()
         exact["events"] = 0
         exact["fatalities"] = 0
         exact["population_exposure"] = 0
@@ -1226,9 +1226,33 @@ def build_lebanon_admin2_conflict_view(admin1_norm, selected_year, selected_mont
                     })
                 )
                 exact = exact.merge(basis, on="admin2_norm", how="left", suffixes=("", "_basis"))
-                event_weights = _coerce_col(exact, "events_basis")
-                fatality_weights = _coerce_col(exact, "fatalities_basis") if "fatalities_basis" in exact.columns else event_weights
-                exposure_weights = _coerce_col(exact, "population_exposure_basis") if "population_exposure_basis" in exact.columns else event_weights
+                event_weights = hierarchy.allocation_weights(
+                    exact,
+                    preferred_cols=[
+                        ("events_basis", 0.55),
+                        ("fatalities_basis", 0.20),
+                        ("population_exposure_basis", 0.15),
+                        ("area_sqkm", 0.10),
+                    ],
+                )
+                fatality_weights = hierarchy.allocation_weights(
+                    exact,
+                    preferred_cols=[
+                        ("fatalities_basis", 0.55),
+                        ("events_basis", 0.25),
+                        ("population_exposure_basis", 0.10),
+                        ("area_sqkm", 0.10),
+                    ],
+                )
+                exposure_weights = hierarchy.allocation_weights(
+                    exact,
+                    preferred_cols=[
+                        ("population_exposure_basis", 0.60),
+                        ("events_basis", 0.20),
+                        ("fatalities_basis", 0.10),
+                        ("area_sqkm", 0.10),
+                    ],
+                )
                 basis_label = f"{basis_period['month']} {basis_period['year']}" if basis_period else "the latest observed district period"
                 basis_scope = "matching event-type district shares" if basis_kind == event_type_norm else "overall district shares"
                 estimate_note = (
@@ -1236,11 +1260,11 @@ def build_lebanon_admin2_conflict_view(admin1_norm, selected_year, selected_mont
                     f"from {basis_label} within {admin1_norm.replace('-', ' ').title()}."
                 )
             else:
-                event_weights = pd.Series(1.0, index=exact.index, dtype="float64")
+                event_weights = district_signal_weights(exact)
                 fatality_weights = event_weights
                 exposure_weights = event_weights
                 estimate_note = (
-                    f"Estimated district breakdown for {selected_month} {selected_year} by equal split because "
+                    f"Estimated district breakdown for {selected_month} {selected_year} using district area or available proxy weights because "
                     f"no district-level basis rows were available within {admin1_norm.replace('-', ' ').title()}."
                 )
             exact["events"] = allocate_total_by_weights(total_events, event_weights)
@@ -1326,6 +1350,7 @@ def build_lebanon_admin2_conflict_view(admin1_norm, selected_year, selected_mont
         merged["has_acled_data"] = False
         merged["acled_match_status"] = "Estimated from governorate total"
         merged["acled_data_note"] = "No ACLED district data"
+        merged["district_estimation_note"] = hierarchy.ESTIMATED_DISTRICT_NOTE
     else:
         if "has_acled_data" not in merged.columns:
             merged["has_acled_data"] = False
@@ -1339,6 +1364,7 @@ def build_lebanon_admin2_conflict_view(admin1_norm, selected_year, selected_mont
         merged["acled_data_note"] = merged["has_acled_data"].map(
             {True: "Matched ACLED district data", False: "No matched events"}
         )
+        merged["district_estimation_note"] = ""
     merged["has_acled_data_label"] = merged["has_acled_data"].map({True: "Yes", False: "No"})
     return merged, estimated, estimate_note
 
@@ -3147,7 +3173,7 @@ def load_country_admin2_boundary(iso3, boundary_gdf, selected_country_name):
     global_admin2 = load_global_admin2_boundaries()
     if global_admin2.empty or "shapeGroup" not in global_admin2.columns:
         return gpd.GeoDataFrame(
-            columns=["admin1_name", "admin1_norm", "admin2_name", "admin2_label", "admin2_norm", "geometry"],
+            columns=["admin1_name", "admin1_norm", "admin2_name", "admin2_label", "admin2_norm", "area_sqkm", "geometry"],
             geometry="geometry",
             crs="EPSG:4326",
         )
@@ -3155,10 +3181,11 @@ def load_country_admin2_boundary(iso3, boundary_gdf, selected_country_name):
     gdf = global_admin2[global_admin2["shapeGroup"].astype(str).str.strip().str.upper() == iso3].copy()
     if gdf.empty:
         return gpd.GeoDataFrame(
-            columns=["admin1_name", "admin1_norm", "admin2_name", "admin2_label", "admin2_norm", "geometry"],
+            columns=["admin1_name", "admin1_norm", "admin2_name", "admin2_label", "admin2_norm", "area_sqkm", "geometry"],
             geometry="geometry",
             crs="EPSG:4326",
         )
+    gdf = add_area_proxy(gdf)
 
     gdf["admin2_name"] = gdf["shapeName"].astype(str).str.strip()
     gdf["admin2_norm"] = gdf["admin2_name"].apply(lambda value: standardize_admin2_name(value, selected_country_name))
@@ -3201,7 +3228,7 @@ def load_country_admin2_boundary(iso3, boundary_gdf, selected_country_name):
 
     gdf = gdf[gdf["admin_name_norm"].notna()].copy()
     gdf = gdf.rename(columns={"admin_name": "admin1_name", "admin_name_norm": "admin1_norm"})
-    return gdf[["admin1_name", "admin1_norm", "admin2_name", "admin2_label", "admin2_norm", "geometry"]].copy()
+    return gdf[["admin1_name", "admin1_norm", "admin2_name", "admin2_label", "admin2_norm", "area_sqkm", "geometry"]].copy()
 
 @st.cache_data(show_spinner=False)
 def load_lebanon_admin2_boundary():
@@ -3212,13 +3239,14 @@ def load_lebanon_admin2_boundary():
         else:
             gdf = gdf.to_crs(epsg=4326)
         gdf = repair_geometries(gdf)
+        gdf = add_area_proxy(gdf)
         gdf["admin1_name"] = gdf["adm1_name"].astype(str).str.strip()
         gdf["admin2_name"] = gdf["adm2_name"].astype(str).str.strip()
         gdf["admin1_norm"] = gdf["admin1_name"].apply(lambda value: standardize_admin_name(value, "Lebanon"))
         gdf["admin2_norm"] = gdf["admin2_name"].apply(standardize_lebanon_admin2_name)
         gdf = gdf[gdf["admin1_norm"].notna() & gdf["admin2_norm"].notna()].copy()
         gdf["admin2_label"] = gdf["admin2_norm"].apply(format_lebanon_admin2_label)
-        gdf = gdf[["admin1_name", "admin1_norm", "admin2_name", "admin2_label", "admin2_norm", "geometry"]].copy()
+        gdf = gdf[["admin1_name", "admin1_norm", "admin2_name", "admin2_label", "admin2_norm", "area_sqkm", "geometry"]].copy()
         return gdf
 
     if lbn_admin2_fallback_path.exists():
@@ -3228,16 +3256,17 @@ def load_lebanon_admin2_boundary():
         else:
             gdf = gdf.to_crs(epsg=4326)
         gdf = repair_geometries(gdf)
+        gdf = add_area_proxy(gdf)
         gdf["admin2_name"] = gdf["shapeName"].astype(str).str.strip()
         gdf["admin2_norm"] = gdf["admin2_name"].apply(standardize_lebanon_admin2_name)
         gdf["admin1_name"] = gdf["shapeName"].map(DISTRICT_TO_ADMIN1_GEO)
         gdf["admin1_norm"] = gdf["admin1_name"].apply(lambda value: standardize_admin_name(value, "Lebanon"))
         gdf = gdf[gdf["admin1_norm"].notna() & gdf["admin2_norm"].notna()].copy()
         gdf["admin2_label"] = gdf["admin2_norm"].apply(format_lebanon_admin2_label)
-        gdf = gdf[["admin1_name", "admin1_norm", "admin2_name", "admin2_label", "admin2_norm", "geometry"]].copy()
+        gdf = gdf[["admin1_name", "admin1_norm", "admin2_name", "admin2_label", "admin2_norm", "area_sqkm", "geometry"]].copy()
         return gdf
 
-    return gpd.GeoDataFrame(columns=["admin1_name", "admin1_norm", "admin2_name", "admin2_label", "admin2_norm", "geometry"], geometry="geometry", crs="EPSG:4326")
+    return gpd.GeoDataFrame(columns=["admin1_name", "admin1_norm", "admin2_name", "admin2_label", "admin2_norm", "area_sqkm", "geometry"], geometry="geometry", crs="EPSG:4326")
 
 @st.cache_data(show_spinner=False)
 def load_lebanon_admin2_conflict():
@@ -3447,7 +3476,7 @@ def build_country_admin2_conflict_view(country_admin2_boundary, selected_country
             selected_event_type,
         )
 
-        exact = boundary[["admin2_norm"]].drop_duplicates().copy()
+        exact = boundary[[col for col in ["admin2_norm", "area_sqkm"] if col in boundary.columns]].drop_duplicates(subset=["admin2_norm"]).copy()
         exact["events"] = 0
         exact["fatalities"] = 0
         exact["population_exposure"] = 0
@@ -3463,9 +3492,33 @@ def build_country_admin2_conflict_view(country_admin2_boundary, selected_country
                     })
                 )
                 exact = exact.merge(basis, on="admin2_norm", how="left", suffixes=("", "_basis"))
-                event_weights = _coerce_col(exact, "events_basis")
-                fatality_weights = _coerce_col(exact, "fatalities_basis") if "fatalities_basis" in exact.columns else event_weights
-                exposure_weights = _coerce_col(exact, "population_exposure_basis") if "population_exposure_basis" in exact.columns else event_weights
+                event_weights = hierarchy.allocation_weights(
+                    exact,
+                    preferred_cols=[
+                        ("events_basis", 0.55),
+                        ("fatalities_basis", 0.20),
+                        ("population_exposure_basis", 0.15),
+                        ("area_sqkm", 0.10),
+                    ],
+                )
+                fatality_weights = hierarchy.allocation_weights(
+                    exact,
+                    preferred_cols=[
+                        ("fatalities_basis", 0.55),
+                        ("events_basis", 0.25),
+                        ("population_exposure_basis", 0.10),
+                        ("area_sqkm", 0.10),
+                    ],
+                )
+                exposure_weights = hierarchy.allocation_weights(
+                    exact,
+                    preferred_cols=[
+                        ("population_exposure_basis", 0.60),
+                        ("events_basis", 0.20),
+                        ("fatalities_basis", 0.10),
+                        ("area_sqkm", 0.10),
+                    ],
+                )
                 basis_label = f"{basis_period['month']} {basis_period['year']}" if basis_period else "the latest observed district period"
                 basis_scope = "matching district shares" if basis_kind == event_type_norm else "overall district shares"
                 estimate_note = (
@@ -3473,11 +3526,11 @@ def build_country_admin2_conflict_view(country_admin2_boundary, selected_country
                     f"from {basis_label} within {admin1_norm.replace('-', ' ').title()}."
                 )
             else:
-                event_weights = pd.Series(1.0, index=exact.index, dtype="float64")
+                event_weights = district_signal_weights(exact)
                 fatality_weights = event_weights
                 exposure_weights = event_weights
                 estimate_note = (
-                    f"Estimated district breakdown for {selected_month} {selected_year} by equal split because "
+                    f"Estimated district breakdown for {selected_month} {selected_year} using district area or available proxy weights because "
                     f"no district-level basis rows were available within {admin1_norm.replace('-', ' ').title()}."
                 )
             exact["events"] = allocate_total_by_weights(total_events, event_weights)
@@ -3543,6 +3596,7 @@ def build_country_admin2_conflict_view(country_admin2_boundary, selected_country
         merged["has_acled_data"] = False
         merged["acled_match_status"] = "Estimated from admin1 total"
         merged["acled_data_note"] = "No direct district ACLED data"
+        merged["district_estimation_note"] = hierarchy.ESTIMATED_DISTRICT_NOTE
     else:
         merged["has_acled_data"] = (merged["events"] > 0) | (merged["fatalities"] > 0) | (merged["population_exposure"] > 0)
         merged["acled_match_status"] = merged["has_acled_data"].map(
@@ -3551,6 +3605,7 @@ def build_country_admin2_conflict_view(country_admin2_boundary, selected_country
         merged["acled_data_note"] = merged["has_acled_data"].map(
             {True: "Matched admin2 conflict data", False: "No matched events"}
         )
+        merged["district_estimation_note"] = ""
     merged["has_acled_data_label"] = merged["has_acled_data"].map({True: "Yes", False: "No"})
     return merged, estimated, estimate_note
 
@@ -3740,10 +3795,15 @@ def build_country_admin2_priority_view(country_admin2_boundary, selected_country
 
     if conflict_estimated or parent_distributed:
         merged["district_value_source"] = "Estimated from admin1 totals"
+        merged["district_estimation_note"] = hierarchy.ESTIMATED_DISTRICT_NOTE
     else:
         merged["district_value_source"] = merged["has_acled_data"].map(
             {True: "Matched admin2 data", False: "No matched district data"}
         )
+        if "district_estimation_note" not in merged.columns:
+            merged["district_estimation_note"] = ""
+        else:
+            merged["district_estimation_note"] = merged["district_estimation_note"].fillna("")
     merged["displacement_data_note"] = "Displacement estimated from admin1 snapshot totals"
 
     estimate_bits = []
@@ -3751,7 +3811,7 @@ def build_country_admin2_priority_view(country_admin2_boundary, selected_country
         estimate_bits.append(conflict_note)
     if parent_distributed:
         estimate_bits.append(
-            "Some district metrics were estimated from admin1 totals using district conflict, exposure, displacement, or equal weights."
+            "Some district metrics were estimated from admin1 totals using district conflict, exposure, displacement, or area proxy weights."
         )
     if numeric_value(admin1_values, "displaced") > 0 or numeric_value(admin1_values, "displaced_in") > 0:
         estimate_bits.append("District displacement is estimated from the admin1 snapshot total.")
@@ -5250,6 +5310,10 @@ else:
                 if _admin2_gdf.empty:
                     st.warning(f"No admin2 boundary data found for {_admin1_display}.")
                 else:
+                    if "district_estimation_note" not in _admin2_gdf.columns:
+                        _admin2_gdf["district_estimation_note"] = ""
+                    else:
+                        _admin2_gdf["district_estimation_note"] = _admin2_gdf["district_estimation_note"].fillna("")
                     _d_metric = selected_metric if selected_metric in {"events", "fatalities", "population_exposure"} else "events"
                     _d_cscale = SCALE_BLUE if _d_metric == "events" else SCALE_WARM if _d_metric == "fatalities" else SCALE_GOLD
                     _fig2 = px.choropleth_mapbox(
@@ -5268,6 +5332,7 @@ else:
                             "fatalities": True,
                             "population_exposure": True,
                             "priority_score": ":.3f",
+                            "district_estimation_note": True,
                             "admin2_norm": False,
                         },
                         mapbox_style="carto-positron",
@@ -5281,6 +5346,7 @@ else:
                             "acled_match_status": "Match Method",
                             "district_value_source": "District Value Source",
                             "displacement_data_note": "Displacement Note",
+                            "district_estimation_note": "Estimate Note",
                             "population_exposure": "Population Exposure",
                             "displaced": "Displaced",
                             "displaced_in": "Displaced",
@@ -5620,6 +5686,10 @@ else:
                         _admin2_gdf["displacement_data_note"] = "No district displacement estimate"
                     else:
                         _admin2_gdf["displacement_data_note"] = _admin2_gdf["displacement_data_note"].fillna("No district displacement estimate")
+                    if "district_estimation_note" not in _admin2_gdf.columns:
+                        _admin2_gdf["district_estimation_note"] = ""
+                    else:
+                        _admin2_gdf["district_estimation_note"] = _admin2_gdf["district_estimation_note"].fillna("")
                     _admin2_gdf["displaced"] = _admin2_gdf["displaced"].where(
                         _admin2_gdf["displaced"] > 0,
                         _admin2_gdf["displaced_in"],
@@ -5641,6 +5711,7 @@ else:
                             "displaced": True,
                             "displaced_in": True,
                             "displacement_date_label": True,
+                            "district_estimation_note": True,
                             "admin2_norm": False,
                         },
                         mapbox_style="carto-positron",
@@ -5660,6 +5731,7 @@ else:
                             "acled_match_status": "Match Method",
                             "district_value_source": "District Value Source",
                             "displacement_data_note": "Displacement Note",
+                            "district_estimation_note": "Estimate Note",
                             "population_exposure": "Population Exposure",
                             "displaced": "Displaced",
                             "displaced_in": "Displaced",
