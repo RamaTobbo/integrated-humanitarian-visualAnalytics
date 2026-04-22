@@ -14,16 +14,19 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+import hierarchy_aggregation as hierarchy
 from dashboard_compare_utils import (
     build_country_comparison_radar,
     prepare_radar_comparison_data,
 )
 from displacement_snapshot_utils import (
+    aggregate_displacement,
     filter_to_period,
     format_period_label,
     get_latest_displacement_snapshot,
     get_latest_period,
     get_peak_displacement,
+    resolve_displacement_period,
 )
 
 # ──────────────────────────────────────────────────
@@ -452,7 +455,6 @@ conflict_admin_path      = BASE_DIR / "data" / "cleaned" / "global"     / "admin
 priority_country_path    = BASE_DIR / "data" / "cleaned" / "global"     / "global_priority_country_with_displacement_monthly.csv"
 priority_admin1_path     = BASE_DIR / "data" / "cleaned" / "global"     / "global_priority_admin1_with_displacement_monthly.csv"
 displacement_dest_path   = BASE_DIR / "data" / "cleaned" / "global"     / "displacement_admin1_destination_monthly_2024_2026.csv"
-displacement_origin_path = BASE_DIR / "data" / "cleaned" / "global"     / "displacement_admin1_origin_monthly_2024_2026.csv"
 country_boundaries_dir   = BASE_DIR / "data" / "cleaned" / "boundaries" / "countries"
 lbn_admin2_fallback_path = BASE_DIR / "data" / "raw"     / "boundaries" / "geoBoundaries-LBN-ADM2.geojson"
 lbn_admin2_clean_path    = BASE_DIR / "data" / "cleaned" / "boundaries" / "lbn_admin2.geojson"
@@ -931,6 +933,20 @@ def minmax_numeric(series):
         return pd.Series([0.0] * len(numeric), index=numeric.index)
     return (numeric - smin) / (smax - smin)
 
+def _coerce_col(frame, col, default=0.0):
+    """Return frame[col] as a numeric Series, or a constant Series if col is absent.
+    Safe replacement for pd.to_numeric(frame.get(col, scalar)).fillna() which crashes
+    when .get() returns a scalar and the scalar has no .fillna() method."""
+    if col in frame.columns:
+        return pd.to_numeric(frame[col], errors="coerce").fillna(default)
+    return pd.Series(default, index=frame.index, dtype="float64")
+
+def ensure_numeric_columns(frame, columns, default=0.0):
+    frame = frame.copy()
+    for col in columns:
+        frame[col] = _coerce_col(frame, col, default)
+    return frame
+
 def allocate_total_by_weights(total_value, weight_series):
     total_value = int(round(float(total_value or 0)))
     weights = pd.to_numeric(weight_series, errors="coerce").fillna(0)
@@ -947,6 +963,130 @@ def allocate_total_by_weights(total_value, weight_series):
         for idx in fractions.index[:remainder]:
             allocated.loc[idx] += 1
     return allocated.astype(int)
+
+def row_to_values(row):
+    if row is None:
+        return {}
+    if isinstance(row, pd.DataFrame):
+        if row.empty:
+            return {}
+        return row.iloc[0].to_dict()
+    if isinstance(row, pd.Series):
+        return row.to_dict()
+    try:
+        return dict(row)
+    except Exception:
+        return {}
+
+def numeric_value(values, key, default=0.0):
+    try:
+        value = values.get(key, default)
+        value = pd.to_numeric(value, errors="coerce")
+        return float(default if pd.isna(value) else value)
+    except Exception:
+        return float(default)
+
+def scale_to_max(series):
+    numeric = pd.to_numeric(series, errors="coerce").fillna(0).clip(lower=0)
+    max_value = float(numeric.max()) if len(numeric) else 0.0
+    if max_value <= 0:
+        return pd.Series(0.0, index=numeric.index)
+    return numeric / max_value
+
+def _fallback_priority_score(frame):
+    work = ensure_numeric_columns(
+        frame.copy(),
+        ["events", "fatalities", "population_exposure", "displaced_in", "displaced"],
+    )
+    displaced_source = (
+        work["displaced_in"]
+        if float(work["displaced_in"].sum()) > 0
+        else work["displaced"]
+    )
+    components = [
+        (scale_to_max(work["events"]), 0.35),
+        (scale_to_max(work["fatalities"]), 0.30),
+        (scale_to_max(displaced_source), 0.25),
+        (scale_to_max(work["population_exposure"]), 0.10),
+    ]
+    score = pd.Series(0.0, index=work.index, dtype="float64")
+    active_weight = 0.0
+    for component, weight in components:
+        if float(component.sum()) > 0:
+            score = score + component * weight
+            active_weight += weight
+    if active_weight <= 0:
+        return score
+    return score / active_weight
+
+def district_signal_weights(frame):
+    weights = pd.Series(0.0, index=frame.index, dtype="float64")
+    for col, multiplier in [
+        ("events", 1.0),
+        ("fatalities", 1.0),
+        ("population_exposure", 0.35),
+        ("displaced_in", 0.75),
+        ("displaced", 0.75),
+    ]:
+        if col in frame.columns:
+            weights = weights + multiplier * _coerce_col(frame, col)
+    if len(weights) and float(weights.sum()) <= 0:
+        weights = pd.Series(1.0, index=frame.index, dtype="float64")
+    return weights
+
+def compute_admin2_priority_scores(frame):
+    frame = ensure_numeric_columns(
+        frame,
+        [
+            "events", "fatalities", "population_exposure", "displaced", "displaced_in",
+            "priority_score_country", "priority_score_global",
+            "access_risk", "demographic_vulnerability",
+            "health_priority_score", "education_priority_score",
+        ],
+    )
+    frame["events_norm"] = scale_to_max(frame["events"])
+    frame["fatalities_norm"] = scale_to_max(frame["fatalities"])
+    frame["conflict_score"] = 0.6 * frame["events_norm"] + 0.4 * frame["fatalities_norm"]
+    disp_source = frame["displaced_in"] if float(frame["displaced_in"].sum()) > 0 else frame["displaced"]
+    frame["displacement_score"] = scale_to_max(disp_source)
+    frame["exposure_score"] = scale_to_max(frame["population_exposure"])
+    frame["access_score"] = scale_to_max(frame["access_risk"])
+    frame["vulnerability_score"] = scale_to_max(frame["demographic_vulnerability"])
+    frame["health_score"] = scale_to_max(frame["health_priority_score"])
+    frame["education_score"] = scale_to_max(frame["education_priority_score"])
+    parent_source = (
+        frame["priority_score_country"]
+        if float(frame["priority_score_country"].sum()) > 0
+        else frame["priority_score_global"]
+    )
+    frame["parent_priority_score"] = scale_to_max(parent_source)
+
+    weighted_components = [
+        ("conflict_score", 0.40),
+        ("displacement_score", 0.25),
+        ("exposure_score", 0.12),
+        ("access_score", 0.10),
+        ("vulnerability_score", 0.07),
+        ("health_score", 0.03),
+        ("education_score", 0.03),
+        ("parent_priority_score", 0.05),
+    ]
+    score = pd.Series(0.0, index=frame.index, dtype="float64")
+    active_weight = 0.0
+    for col, weight in weighted_components:
+        if float(frame[col].sum()) > 0:
+            score = score + frame[col] * weight
+            active_weight += weight
+    frame["priority_score"] = score / active_weight if active_weight > 0 else 0.0
+    frame["priority_rank"] = 0
+    positive = frame["priority_score"] > 0
+    if positive.any():
+        frame.loc[positive, "priority_rank"] = (
+            frame.loc[positive, "priority_score"]
+            .rank(method="dense", ascending=False)
+            .astype(int)
+        )
+    return frame
 
 def get_lebanon_admin2_basis_rows(admin1_norm, target_year, target_month_num, event_type="All"):
     base = load_lebanon_admin2_conflict().copy()
@@ -1075,30 +1215,45 @@ def build_lebanon_admin2_conflict_view(admin1_norm, selected_year, selected_mont
         exact["fatalities"] = 0
         exact["population_exposure"] = 0
 
-        if (total_events > 0 or total_fatalities > 0 or total_exposure > 0) and not basis_rows.empty:
-            basis = (
-                basis_rows.groupby("admin2_norm", as_index=False)
-                .agg({
-                    "events": "sum",
-                    "fatalities": "sum",
-                    "population_exposure": "sum",
-                })
-            )
-            exact = exact.merge(basis, on="admin2_norm", how="left", suffixes=("", "_basis"))
-            event_weights = exact.get("events_basis", 0)
-            fatality_weights = exact.get("fatalities_basis", event_weights)
-            exposure_weights = exact.get("population_exposure_basis", event_weights)
+        if total_events > 0 or total_fatalities > 0 or total_exposure > 0:
+            if not basis_rows.empty:
+                basis = (
+                    basis_rows.groupby("admin2_norm", as_index=False)
+                    .agg({
+                        "events": "sum",
+                        "fatalities": "sum",
+                        "population_exposure": "sum",
+                    })
+                )
+                exact = exact.merge(basis, on="admin2_norm", how="left", suffixes=("", "_basis"))
+                event_weights = _coerce_col(exact, "events_basis")
+                fatality_weights = _coerce_col(exact, "fatalities_basis") if "fatalities_basis" in exact.columns else event_weights
+                exposure_weights = _coerce_col(exact, "population_exposure_basis") if "population_exposure_basis" in exact.columns else event_weights
+                basis_label = f"{basis_period['month']} {basis_period['year']}" if basis_period else "the latest observed district period"
+                basis_scope = "matching event-type district shares" if basis_kind == event_type_norm else "overall district shares"
+                estimate_note = (
+                    f"Estimated district breakdown for {selected_month} {selected_year} using {basis_scope} "
+                    f"from {basis_label} within {admin1_norm.replace('-', ' ').title()}."
+                )
+            else:
+                event_weights = pd.Series(1.0, index=exact.index, dtype="float64")
+                fatality_weights = event_weights
+                exposure_weights = event_weights
+                estimate_note = (
+                    f"Estimated district breakdown for {selected_month} {selected_year} by equal split because "
+                    f"no district-level basis rows were available within {admin1_norm.replace('-', ' ').title()}."
+                )
             exact["events"] = allocate_total_by_weights(total_events, event_weights)
-            exact["fatalities"] = allocate_total_by_weights(total_fatalities, fatality_weights if pd.to_numeric(fatality_weights, errors="coerce").fillna(0).sum() > 0 else event_weights)
-            exact["population_exposure"] = allocate_total_by_weights(total_exposure, exposure_weights if pd.to_numeric(exposure_weights, errors="coerce").fillna(0).sum() > 0 else event_weights)
+            exact["fatalities"] = allocate_total_by_weights(
+                total_fatalities,
+                fatality_weights if float(pd.to_numeric(fatality_weights, errors="coerce").fillna(0).sum()) > 0 else event_weights,
+            )
+            exact["population_exposure"] = allocate_total_by_weights(
+                total_exposure,
+                exposure_weights if float(pd.to_numeric(exposure_weights, errors="coerce").fillna(0).sum()) > 0 else event_weights,
+            )
             exact = exact[["admin2_norm", "events", "fatalities", "population_exposure"]].copy()
             estimated = True
-            basis_label = f"{basis_period['month']} {basis_period['year']}" if basis_period else "the latest observed district period"
-            basis_scope = "matching event-type district shares" if basis_kind == event_type_norm else "overall district shares"
-            estimate_note = (
-                f"Estimated district breakdown for {selected_month} {selected_year} using {basis_scope} "
-                f"from {basis_label} within {admin1_norm.replace('-', ' ').title()}."
-            )
 
     if not exact.empty:
         metric_source = (
@@ -1133,7 +1288,7 @@ def build_lebanon_admin2_conflict_view(admin1_norm, selected_year, selected_mont
     merged = boundary.merge(metric_source, on="admin2_norm", how="left")
     merged = merged.merge(status_source, on="admin2_norm", how="left")
     for col in ["events", "fatalities", "population_exposure"]:
-        merged[col] = pd.to_numeric(merged.get(col, 0), errors="coerce").fillna(0)
+        merged[col] = _coerce_col(merged, col)
     if estimated:
         merged["has_acled_data"] = False
         merged["acled_match_status"] = "Estimated from governorate total"
@@ -1250,7 +1405,7 @@ def build_lebanon_admin2_priority_view(admin1_norm, selected_year, selected_mont
             "rural_norm",
             "demographic_vulnerability",
         ]:
-            exact[col] = pd.to_numeric(exact.get(col, 0), errors="coerce").fillna(0)
+            exact[col] = _coerce_col(exact, col)
         exact["events_norm"] = minmax_numeric(exact["events"])
         exact["fatalities_norm"] = minmax_numeric(exact["fatalities"])
         exact["conflict_score"] = 0.6 * exact["events_norm"] + 0.4 * exact["fatalities_norm"]
@@ -1299,7 +1454,7 @@ def build_lebanon_admin2_priority_view(admin1_norm, selected_year, selected_mont
         "events", "fatalities", "population_exposure", "priority_score", "priority_rank",
         "access_risk", "demographic_vulnerability",
     ]:
-        merged[col] = pd.to_numeric(merged.get(col, 0), errors="coerce").fillna(0)
+        merged[col] = _coerce_col(merged, col)
     if "has_acled_data" not in merged.columns:
         merged["has_acled_data"] = False
     else:
@@ -1371,6 +1526,105 @@ def format_metric_value(metric, value):
     except Exception:
         return "—"
     return f"{value:.3f}" if is_score_metric(metric) else fmt_big(value)
+
+def displacement_mode_key(label):
+    return "cumulative" if str(label).strip().lower().startswith("cumulative") else "latest"
+
+def displacement_mode_caption(mode, period_label):
+    if mode == "cumulative":
+        return "Cumulative sum across available monthly records"
+    return f"Stock snapshot - {period_label}" if period_label else "Stock snapshot"
+
+def displacement_region_chart_title(country_name, period_label, mode="latest"):
+    if mode == "cumulative":
+        return f"Cumulative Displacement by Region ({country_name}, 2024-2026)"
+    date_text = period_label or "latest available date"
+    return f"Latest Displacement Snapshot by Region ({country_name}, {date_text})"
+
+def displacement_country_chart_title(period_label, mode="latest"):
+    if mode == "cumulative":
+        return "Cumulative Displacement by Country (2024-2026)"
+    date_text = period_label or "per-country latest available dates"
+    return f"Latest Displacement Snapshot by Country ({date_text})"
+
+def build_country_admin1_displacement(country_norm, mode="latest", period=None):
+    disp_in_rows = displacement_dest[displacement_dest["country"] == country_norm].copy()
+
+    if mode == "cumulative":
+        arrivals, _ = aggregate_displacement(
+            disp_in_rows,
+            ["admin1_norm"],
+            "displaced_in",
+            mode="cumulative",
+        )
+        period_label = "2024-2026"
+        period_source = "cumulative"
+        resolved_period = None
+    else:
+        resolved_period, period_source, _ = resolve_displacement_period(disp_in_rows, None)
+        if period is not None:
+            resolved_period = period
+        arrivals, _ = get_latest_displacement_snapshot(
+            disp_in_rows,
+            ["admin1_norm"],
+            "displaced_in",
+            period=resolved_period,
+        )
+        period_label = format_period_label(resolved_period)
+
+    merged = arrivals.copy()
+    if "displaced_in" not in merged.columns:
+        merged["displaced_in"] = 0
+    merged["displaced_in"] = pd.to_numeric(merged["displaced_in"], errors="coerce").fillna(0)
+    if "admin1_norm" not in merged.columns:
+        merged["admin1_norm"] = pd.Series(dtype="object")
+    merged["displaced"] = merged["displaced_in"]
+    merged["displacement_date_label"] = period_label or "No displacement date"
+    merged["displacement_mode_label"] = displacement_mode_caption(mode, period_label)
+    return merged, resolved_period, period_label, period_source, False
+
+def _country_name_from_displacement(country_norm):
+    if "country_name" in displacement_dest.columns:
+        match = displacement_dest[displacement_dest["country"] == country_norm]
+        if not match.empty:
+            label = str(match["country_name"].dropna().iloc[0]).strip()
+            if label:
+                return label
+    return str(country_norm).replace("-", " ").title()
+
+def build_world_displacement_summary(mode="latest"):
+    country_norms = sorted(set(displacement_dest["country"].dropna().astype(str)))
+    rows = []
+    for country_norm in country_norms:
+        admin1_disp, period, period_label, period_source, period_mismatch = build_country_admin1_displacement(
+            country_norm,
+            mode=mode,
+        )
+        rows.append({
+            "country_norm": country_norm,
+            "country": _country_name_from_displacement(country_norm),
+            "displaced": float(admin1_disp["displaced"].sum()) if not admin1_disp.empty else 0.0,
+            "displaced_in": float(admin1_disp["displaced_in"].sum()) if not admin1_disp.empty else 0.0,
+            "displacement_date_label": period_label or "No displacement date",
+            "displacement_period_source": period_source,
+            "displacement_period_mismatch": bool(period_mismatch),
+            "displacement_year": period.get("year") if period else pd.NA,
+            "displacement_month_num": period.get("month_num") if period else pd.NA,
+        })
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "country_norm",
+            "country",
+            "displaced",
+            "displaced_in",
+            "displacement_date_label",
+            "displacement_period_source",
+            "displacement_period_mismatch",
+            "displacement_year",
+            "displacement_month_num",
+        ],
+    )
 
 def get_country_priority_period_row(country_rows, selected_year, selected_month):
     period_rows = country_rows[
@@ -1519,14 +1773,10 @@ def render_top10_grid(df, name_col, val_col, fmt_fn=None):
 def render_bubble_story(selected_country_name, boundary_gdf):
     cnorm = canonical_country_norm(selected_country_name)
 
-    # --- aggregate displacement arrivals & departures over full period ---
+    # --- aggregate displacement over full period ---
     disp_agg = (
         displacement_dest[displacement_dest["country"] == cnorm]
         .groupby("admin1_norm", as_index=False)["displaced_in"].sum()
-    )
-    orig_agg = (
-        displacement_origin[displacement_origin["country"] == cnorm]
-        .groupby("admin1_norm", as_index=False)["displaced_from"].sum()
     )
 
     # --- aggregate priority over full period ---
@@ -1540,8 +1790,7 @@ def render_bubble_story(selected_country_name, boundary_gdf):
                 agg_d[c] = "mean" if "score" in c else "sum"
         pri_agg = pri_sub.groupby("admin1_norm", as_index=False).agg(agg_d)
 
-    bdf = disp_agg.merge(orig_agg, how="outer", on="admin1_norm")
-    bdf = bdf.merge(pri_agg, how="outer", on="admin1_norm")
+    bdf = disp_agg.merge(pri_agg, how="outer", on="admin1_norm")
 
     # display names from boundary
     name_map = dict(zip(boundary_gdf["admin_name_norm"], boundary_gdf["admin_name"]))
@@ -1549,7 +1798,7 @@ def render_bubble_story(selected_country_name, boundary_gdf):
         bdf["admin1_norm"].apply(lambda x: str(x).replace("-", " ").title() if pd.notna(x) else "")
     )
 
-    for col in ["displaced_in", "displaced_from", "events", "fatalities",
+    for col in ["displaced_in", "events", "fatalities",
                 "priority_score_country", "displaced", "population_exposure"]:
         if col not in bdf.columns:
             bdf[col] = 0.0
@@ -1614,14 +1863,13 @@ def render_bubble_story(selected_country_name, boundary_gdf):
         text=bdf["label"],
         textfont=dict(family="Inter", size=9, color="rgba(255,255,255,0.95)"),
         textposition="middle center",
-        customdata=bdf[["display_name", "displaced_in", "displaced_from",
+        customdata=bdf[["display_name", "displaced_in",
                          "priority_score_country", "events", "fatalities"]].values,
         hovertemplate=(
             "<b>%{customdata[0]}</b><br>"
-            "Displaced in: <b>%{customdata[1]:,.0f}</b><br>"
-            "Displaced out: %{customdata[2]:,.0f}<br>"
-            "Priority score: %{customdata[3]:.3f}<br>"
-            "Events: %{customdata[4]:,.0f}  ·  Fatalities: %{customdata[5]:,.0f}"
+            "Displaced: <b>%{customdata[1]:,.0f}</b><br>"
+            "Priority score: %{customdata[2]:.3f}<br>"
+            "Events: %{customdata[3]:,.0f}  ·  Fatalities: %{customdata[4]:,.0f}"
             "<extra></extra>"
         ),
         showlegend=False, name="",
@@ -1661,7 +1909,7 @@ def render_bubble_story(selected_country_name, boundary_gdf):
     st.plotly_chart(fig, use_container_width=True, key=f"bubble_{cnorm}")
 
 
-def render_story_overview(selected_country_name, boundary_gdf, total_arrived, total_departed):
+def render_story_overview(selected_country_name, boundary_gdf, total_arrived):
     cnorm = canonical_country_norm(selected_country_name)
 
     total_events_full = float(admin_conflict[admin_conflict["country_norm"] == cnorm]["events"].sum())
@@ -1673,8 +1921,8 @@ def render_story_overview(selected_country_name, boundary_gdf, total_arrived, to
         The full picture of {selected_country_name}, 2024–2026
       </p>
       <p style="font-family:'Inter',sans-serif;font-size:14px;color:#5a6577;line-height:1.85;margin:0;max-width:640px;">
-        Across all regions, <strong style="color:#1b2230;">{fmt_big(total_arrived)}</strong> people
-        arrived and <strong style="color:#1b2230;">{fmt_big(total_departed)}</strong> departed.
+        Across all regions, <strong style="color:#1b2230;">{fmt_big(total_arrived)}</strong> displaced people
+        are present in the latest stock snapshot.
         The conflict left <strong style="color:#b8703a;">{fmt_big(total_fat_full)}</strong> fatalities
         across <strong style="color:#2c4a6e;">{fmt_big(total_events_full)}</strong> recorded events.
         Below are the ten admin areas that absorbed the most displaced people.
@@ -1686,12 +1934,8 @@ def render_story_overview(selected_country_name, boundary_gdf, total_arrived, to
     st.markdown(f"""
     <div style="display:flex;gap:14px;flex-wrap:wrap;margin:10px 0 22px 0;">
       <div style="background:#e8eef6;border-radius:10px;padding:12px 20px;">
-        <div style="font-family:'Inter',sans-serif;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#5a7aa0;margin-bottom:4px;">Displaced In</div>
+        <div style="font-family:'Inter',sans-serif;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#5a7aa0;margin-bottom:4px;">Displaced</div>
         <div style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#2c4a6e;">{fmt_big(total_arrived)}</div>
-      </div>
-      <div style="background:#fdf3eb;border-radius:10px;padding:12px 20px;">
-        <div style="font-family:'Inter',sans-serif;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#b8703a;margin-bottom:4px;">Displaced Out</div>
-        <div style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#b8703a;">{fmt_big(total_departed)}</div>
       </div>
       <div style="background:#eef1f6;border-radius:10px;padding:12px 20px;">
         <div style="font-family:'Inter',sans-serif;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#5a6577;margin-bottom:4px;">Conflict Events</div>
@@ -1704,13 +1948,13 @@ def render_story_overview(selected_country_name, boundary_gdf, total_arrived, to
     </div>
     """, unsafe_allow_html=True)
 
-    # Top admin1 by displaced arrivals — horizontal bar
+    # Top admin1 by displaced people — horizontal bar
     disp_agg = (
         displacement_dest[displacement_dest["country"] == cnorm]
         .groupby("admin1_norm", as_index=False)["displaced_in"].sum()
     )
     if disp_agg.empty:
-        st.info("No displacement arrival data available.")
+        st.info("No displacement data available.")
         return
 
     name_map = {}
@@ -1733,7 +1977,7 @@ def render_story_overview(selected_country_name, boundary_gdf, total_arrived, to
         text=[fmt_big(v) for v in top["displaced_in"][::-1]],
         textposition="inside",
         textfont=dict(family="Inter", size=11, color="rgba(255,255,255,0.9)"),
-        hovertemplate="<b>%{y}</b><br>Displaced in: %{x:,.0f}<extra></extra>",
+        hovertemplate="<b>%{y}</b><br>Displaced: %{x:,.0f}<extra></extra>",
     ))
     fig.update_layout(
         paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
@@ -1787,9 +2031,18 @@ def render_story_priority_scatter(selected_country_name, boundary_gdf):
             sdf[col] = 0.0
         sdf[col] = pd.to_numeric(sdf[col], errors="coerce").fillna(0.0)
 
+    fallback_score = _fallback_priority_score(sdf)
+    real_score = pd.to_numeric(sdf["priority_score_country"], errors="coerce").fillna(0.0)
+    missing_score = real_score <= 0
+    fallback_used = bool(float(fallback_score[missing_score].sum()) > 0)
+    sdf["priority_score_country"] = real_score.where(~missing_score, fallback_score)
+    sdf["score_source"] = "Priority model"
+    if fallback_used:
+        sdf.loc[missing_score & (fallback_score > 0), "score_source"] = "Estimated from same-period inputs"
+
     sdf = sdf[sdf["priority_score_country"] > 0].copy()
     if sdf.empty:
-        st.info("No priority score data to display.")
+        st.info("No conflict, displacement, exposure, or priority signal is available for this snapshot.")
         return
 
     max_fat = float(sdf["fatalities"].max()) or 1.0
@@ -1807,6 +2060,12 @@ def render_story_priority_scatter(selected_country_name, boundary_gdf):
     )
 
     max_exp = float(sdf["population_exposure"].max()) or 1.0
+    score_note = (
+        "Precomputed priority scores were missing for some regions, so those scores are estimated from "
+        "same-period events, fatalities, displacement, and exposure."
+        if fallback_used else
+        "Priority scores come from the precomputed priority model for this snapshot."
+    )
 
     st.markdown(f"""
     <div style="padding:20px 0 10px 0;">
@@ -1815,9 +2074,9 @@ def render_story_priority_scatter(selected_country_name, boundary_gdf):
       </p>
       <p style="font-family:'Inter',sans-serif;font-size:14px;color:#5a6577;line-height:1.85;margin:0;max-width:660px;">
         Humanitarian priority is not simply a function of how many people were displaced.
-        Regions with <em>fewer arrivals</em> can rank highest if they also face intense conflict,
+        Regions with <em>lower displacement</em> can rank highest if they also face intense conflict,
         high fatality rates, or large population exposure. Each circle below is one admin area —
-        <strong>horizontal position</strong> shows displaced arrivals,
+        <strong>horizontal position</strong> shows displaced people,
         <strong>vertical position</strong> shows priority score,
         <strong>circle size</strong> scales with fatalities, and
         <strong>color</strong> reflects population exposure.
@@ -1853,7 +2112,7 @@ def render_story_priority_scatter(selected_country_name, boundary_gdf):
                          "priority_score_country", "population_exposure", "events"]].values,
         hovertemplate=(
             "<b>%{customdata[0]}</b><br>"
-            "Displaced in: <b>%{customdata[1]:,.0f}</b><br>"
+            "Displaced: <b>%{customdata[1]:,.0f}</b><br>"
             "Priority score: <b>%{customdata[3]:.3f}</b><br>"
             "Fatalities: %{customdata[2]:,.0f}<br>"
             "Pop. exposure: %{customdata[4]:,.0f}<br>"
@@ -1892,7 +2151,7 @@ def render_story_priority_scatter(selected_country_name, boundary_gdf):
         margin=dict(l=50, r=90, t=20, b=50),
         height=500,
         xaxis=dict(
-            title=dict(text="Total Displaced Arrivals (2024–2026)", font=dict(family="Inter", size=11, color="#5a6577")),
+            title=dict(text="Total Displaced (2024–2026)", font=dict(family="Inter", size=11, color="#5a6577")),
             showgrid=True, gridcolor="#f1f4f9", zeroline=False, showline=False,
             tickfont=dict(family="Inter", size=10),
         ),
@@ -1930,50 +2189,38 @@ def render_displacement_snapshot_bubble_story(
 ):
     cnorm = canonical_country_norm(selected_country_name)
     disp_in_rows = displacement_dest[displacement_dest["country"] == cnorm].copy()
-    disp_out_rows = displacement_origin[displacement_origin["country"] == cnorm].copy()
     pri_rows = admin1_priority[admin1_priority["country_norm"] == cnorm].copy()
 
     if displacement_mode == "peak":
         disp_agg = get_peak_displacement(disp_in_rows, ["admin1_norm"], "displaced_in")
-        orig_agg = get_peak_displacement(disp_out_rows, ["admin1_norm"], "displaced_from")
         pri_slice = filter_to_period(pri_rows, get_latest_period(pri_rows))
-        disp_in_hover_label = "Peak displaced in"
-        disp_out_hover_label = "Peak displaced out"
+        disp_in_hover_label = "Peak displaced"
     else:
-        snapshot_period = (
-            snapshot_period
-            or get_latest_period(disp_in_rows, pri_rows, intersection=True)
-            or get_latest_period(disp_in_rows)
-            or get_latest_period(pri_rows)
-            or get_latest_period(disp_out_rows)
-        )
+        # Use the period passed from the call site; only self-resolve as a last resort.
+        if snapshot_period is None:
+            snapshot_period, _, _ = resolve_displacement_period(
+                disp_in_rows, None, pri_rows
+            )
         disp_agg, _ = get_latest_displacement_snapshot(
-            disp_in_rows,
-            ["admin1_norm"],
-            "displaced_in",
-            period=snapshot_period,
-        )
-        orig_agg, _ = get_latest_displacement_snapshot(
-            disp_out_rows,
-            ["admin1_norm"],
-            "displaced_from",
-            period=snapshot_period,
+            disp_in_rows, ["admin1_norm"], "displaced_in", period=snapshot_period,
         )
         pri_slice = filter_to_period(pri_rows, snapshot_period)
-        disp_in_hover_label = "Latest displaced in"
-        disp_out_hover_label = "Displaced out in same month"
+        snap_label = format_period_label(snapshot_period)
+        disp_in_hover_label  = f"Displaced · {snap_label}"  if snap_label else "Displaced (snapshot)"
 
     if pri_slice.empty:
         pri_agg = pd.DataFrame(columns=["admin1_norm"])
     else:
+        # priority_score_country is a country-level score — use first(), not mean().
         agg_d = {"events": "sum", "fatalities": "sum"}
-        for c in ["priority_score_country", "displaced", "population_exposure"]:
+        for c in ["displaced", "population_exposure"]:
             if c in pri_slice.columns:
-                agg_d[c] = "mean" if "score" in c else "sum"
+                agg_d[c] = "sum"
+        if "priority_score_country" in pri_slice.columns:
+            agg_d["priority_score_country"] = "first"
         pri_agg = pri_slice.groupby("admin1_norm", as_index=False).agg(agg_d)
 
-    bdf = disp_agg.merge(orig_agg, how="outer", on="admin1_norm")
-    bdf = bdf.merge(pri_agg, how="outer", on="admin1_norm")
+    bdf = disp_agg.merge(pri_agg, how="outer", on="admin1_norm")
 
     name_map = {}
     if boundary_gdf is not None and not boundary_gdf.empty:
@@ -1984,7 +2231,6 @@ def render_displacement_snapshot_bubble_story(
 
     for col in [
         "displaced_in",
-        "displaced_from",
         "events",
         "fatalities",
         "priority_score_country",
@@ -2060,7 +2306,6 @@ def render_displacement_snapshot_bubble_story(
         customdata=bdf[[
             "display_name",
             "displaced_in",
-            "displaced_from",
             "priority_score_country",
             "events",
             "fatalities",
@@ -2068,9 +2313,8 @@ def render_displacement_snapshot_bubble_story(
         hovertemplate=(
             "<b>%{customdata[0]}</b><br>"
             f"{disp_in_hover_label}: <b>%{{customdata[1]:,.0f}}</b><br>"
-            f"{disp_out_hover_label}: %{{customdata[2]:,.0f}}<br>"
-            "Priority score: %{customdata[3]:.3f}<br>"
-            "Events: %{customdata[4]:,.0f}  ·  Fatalities: %{customdata[5]:,.0f}"
+            "Priority score: %{customdata[2]:.3f}<br>"
+            "Events: %{customdata[3]:,.0f}  ·  Fatalities: %{customdata[4]:,.0f}"
             "<extra></extra>"
         ),
         showlegend=False,
@@ -2128,8 +2372,6 @@ def render_displacement_snapshot_overview(
     boundary_gdf,
     arrivals_snapshot,
     arrivals_period,
-    departures_snapshot,
-    departures_period,
     displacement_mode="latest",
 ):
     cnorm = canonical_country_norm(selected_country_name)
@@ -2137,38 +2379,39 @@ def render_displacement_snapshot_overview(
     total_fat_full = float(admin_conflict[admin_conflict["country_norm"] == cnorm]["fatalities"].sum())
 
     total_arrived = float(arrivals_snapshot["displaced_in"].sum()) if not arrivals_snapshot.empty else 0.0
-    total_departed = float(departures_snapshot["displaced_from"].sum()) if not departures_snapshot.empty else 0.0
     arrivals_label = format_period_label(arrivals_period) or "No snapshot"
-    departures_label = format_period_label(departures_period) or "No snapshot"
     arrived_display = fmt_big(total_arrived) if not arrivals_snapshot.empty else "—"
-    departed_display = fmt_big(total_departed) if not departures_snapshot.empty else "—"
 
     if displacement_mode == "peak":
-        title = f"Peak displacement snapshot for {selected_country_name}"
-        lead_copy = (
-            f"Peak displaced-in values are shown by admin1 across the selected range, and displaced-out values use "
-            f"the latest available departure snapshot in <strong style=\"color:#1b2230;\">{departures_label}</strong>."
+        title       = f"Peak Displacement Snapshot — {selected_country_name}"
+        bar_hover_label = "Peak displaced"
+        definition_note = (
+            "<strong>Displaced (peak)</strong>: the highest single-month displacement stock "
+            "recorded in any region, not a running total."
         )
-        bar_hover_label = "Peak displaced in"
     else:
-        title = f"Latest displacement snapshot for {selected_country_name}"
-        lead_copy = (
-            f"Displaced-in values use the latest arrival snapshot in <strong style=\"color:#1b2230;\">{arrivals_label}</strong>, "
-            f"while displaced-out values use the latest departure snapshot in "
-            f"<strong style=\"color:#1b2230;\">{departures_label}</strong>."
+        title = (
+            f"Displacement Snapshot — {selected_country_name}, {arrivals_label}"
+            if arrivals_label != "No snapshot"
+            else f"Displacement Snapshot — {selected_country_name}"
         )
-        bar_hover_label = "Latest displaced in snapshot"
+        bar_hover_label = f"Displaced · {arrivals_label}"
+        definition_note = (
+            "<strong>Displaced</strong> = people currently sheltering in a region "
+            f"(stock, not cumulative flow) · snapshot: <strong>{arrivals_label}</strong>."
+        )
 
     st.markdown(f"""
     <div style="padding:20px 0 10px 0;">
       <p style="font-family:'Playfair Display',serif;font-size:22px;font-weight:600;color:#1b2230;line-height:1.4;margin:0 0 10px 0;">
         {title}
       </p>
-      <p style="font-family:'Inter',sans-serif;font-size:14px;color:#5a6577;line-height:1.85;margin:0;max-width:680px;">
-        {lead_copy}
-        Across the cumulative 2024–2026 conflict layer, <strong style="color:#b8703a;">{fmt_big(total_fat_full)}</strong>
-        fatalities were recorded across <strong style="color:#2c4a6e;">{fmt_big(total_events_full)}</strong> events.
-        The chart below ranks admin areas by the current displaced-in snapshot instead of summing every month together.
+      <p style="font-family:'Inter',sans-serif;font-size:13px;color:#5a6577;line-height:1.8;margin:0 0 6px 0;max-width:700px;">
+        {definition_note}
+      </p>
+      <p style="font-family:'Inter',sans-serif;font-size:13px;color:#5a6577;line-height:1.8;margin:0;max-width:700px;">
+        Across the 2024–2026 conflict layer: <strong style="color:#b8703a;">{fmt_big(total_fat_full)}</strong>
+        fatalities · <strong style="color:#2c4a6e;">{fmt_big(total_events_full)}</strong> events.
       </p>
     </div>
     """, unsafe_allow_html=True)
@@ -2176,14 +2419,9 @@ def render_displacement_snapshot_overview(
     st.markdown(f"""
     <div style="display:flex;gap:14px;flex-wrap:wrap;margin:10px 0 22px 0;">
       <div style="background:#e8eef6;border-radius:10px;padding:12px 20px;">
-        <div style="font-family:'Inter',sans-serif;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#5a7aa0;margin-bottom:4px;">Displaced In</div>
+        <div style="font-family:'Inter',sans-serif;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#5a7aa0;margin-bottom:4px;">Displaced</div>
         <div style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#2c4a6e;">{arrived_display}</div>
-        <div style="font-family:'Inter',sans-serif;font-size:11px;color:#5a6577;margin-top:4px;">Latest snapshot · {arrivals_label}</div>
-      </div>
-      <div style="background:#fdf3eb;border-radius:10px;padding:12px 20px;">
-        <div style="font-family:'Inter',sans-serif;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#b8703a;margin-bottom:4px;">Displaced Out</div>
-        <div style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#b8703a;">{departed_display}</div>
-        <div style="font-family:'Inter',sans-serif;font-size:11px;color:#7a4418;margin-top:4px;">Latest snapshot · {departures_label}</div>
+        <div style="font-family:'Inter',sans-serif;font-size:11px;color:#5a6577;margin-top:4px;">Stock snapshot · {arrivals_label}</div>
       </div>
       <div style="background:#eef1f6;border-radius:10px;padding:12px 20px;">
         <div style="font-family:'Inter',sans-serif;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#5a6577;margin-bottom:4px;">Conflict Events</div>
@@ -2199,7 +2437,7 @@ def render_displacement_snapshot_overview(
     """, unsafe_allow_html=True)
 
     if arrivals_snapshot.empty:
-        st.info("No displacement arrival snapshot data available.")
+        st.info("No displacement snapshot data available.")
         return
 
     disp_agg = arrivals_snapshot.copy()
@@ -2215,6 +2453,12 @@ def render_displacement_snapshot_overview(
         f"rgba(44,74,110,{max(0.35, 1.0 - i*0.07):.2f})" for i in range(len(top))
     ]
 
+    chart_title = (
+        f"Latest Displacement Snapshot by Region ({selected_country_name}, {arrivals_label})"
+        if arrivals_label != "No snapshot"
+        else f"Latest Displacement Snapshot by Region ({selected_country_name})"
+    )
+
     fig = go.Figure(go.Bar(
         y=top["display_name"][::-1],
         x=top["displaced_in"][::-1],
@@ -2223,15 +2467,27 @@ def render_displacement_snapshot_overview(
         text=[fmt_big(v) for v in top["displaced_in"][::-1]],
         textposition="inside",
         textfont=dict(family="Inter", size=11, color="rgba(255,255,255,0.9)"),
-        hovertemplate=f"<b>%{{y}}</b><br>{bar_hover_label}: %{{x:,.0f}}<extra></extra>",
+        customdata=[[arrivals_label]] * len(top),
+        hovertemplate=(
+            f"<b>%{{y}}</b><br>"
+            f"{bar_hover_label}: <b>%{{x:,.0f}}</b><br>"
+            f"Snapshot: %{{customdata[0]}}"
+            f"<extra></extra>"
+        ),
     ))
     fig.update_layout(
+        title=dict(
+            text=chart_title,
+            font=dict(family="Inter", size=13, color="#5a6577"),
+            x=0, xanchor="left", pad=dict(l=10, t=4),
+        ),
         paper_bgcolor="#ffffff",
         plot_bgcolor="#ffffff",
         font=dict(family="Inter", color="#5a6577", size=11),
-        margin=dict(l=10, r=30, t=10, b=30),
-        height=max(280, len(top) * 34),
+        margin=dict(l=10, r=30, t=36, b=30),
+        height=max(300, len(top) * 34 + 36),
         xaxis=dict(
+            title=dict(text="Displaced persons (snapshot stock)", font=dict(family="Inter", size=10, color="#8893a4")),
             showgrid=True,
             gridcolor="#eef1f6",
             gridwidth=1,
@@ -2262,54 +2518,151 @@ def render_displacement_snapshot_priority_scatter(
     cnorm = canonical_country_norm(selected_country_name)
     pri_rows = admin1_priority[admin1_priority["country_norm"] == cnorm].copy()
     disp_in_rows = displacement_dest[displacement_dest["country"] == cnorm].copy()
+    conflict_rows = admin_conflict[admin_conflict["country_norm"] == cnorm].copy()
 
-    if pri_rows.empty:
-        st.info("No priority data available for this country.")
-        return
+    def _aggregate_priority_rows(frame):
+        columns = [
+            "admin1_norm",
+            "events",
+            "fatalities",
+            "population_exposure",
+            "priority_score_country",
+            "displaced",
+        ]
+        if frame is None or frame.empty or "admin1_norm" not in frame.columns:
+            return pd.DataFrame(columns=columns)
+        work = ensure_numeric_columns(
+            frame.copy(),
+            ["events", "fatalities", "population_exposure", "priority_score_country", "displaced"],
+        )
+        agg_d = {}
+        for col in ["events", "fatalities", "population_exposure", "displaced"]:
+            if col in work.columns:
+                agg_d[col] = "sum"
+        if "priority_score_country" in work.columns:
+            agg_d["priority_score_country"] = "first"
+        if not agg_d:
+            return pd.DataFrame(columns=columns)
+        return work.groupby("admin1_norm", as_index=False).agg(agg_d)
+
+    def _aggregate_conflict_rows(frame, period):
+        columns = ["admin1_norm", "events", "fatalities", "population_exposure"]
+        if frame is None or frame.empty or "admin1_norm" not in frame.columns:
+            return pd.DataFrame(columns=columns)
+        work = filter_to_period(frame, period) if period else frame.iloc[0:0].copy()
+        if work.empty:
+            return pd.DataFrame(columns=columns)
+        if "event_type" in work.columns:
+            event_norm = work["event_type"].astype(str).str.strip().str.lower()
+            all_rows = work[event_norm == "all"].copy()
+            if not all_rows.empty:
+                work = all_rows
+        work = ensure_numeric_columns(work, ["events", "fatalities", "population_exposure"])
+        return (
+            work.groupby("admin1_norm", as_index=False)
+            .agg({"events": "sum", "fatalities": "sum", "population_exposure": "sum"})
+        )
+
+    def _fallback_priority_score(frame):
+        work = ensure_numeric_columns(
+            frame.copy(),
+            ["events", "fatalities", "population_exposure", "displaced_in", "displaced"],
+        )
+        displaced_source = (
+            work["displaced_in"]
+            if float(work["displaced_in"].sum()) > 0
+            else work["displaced"]
+        )
+        components = [
+            (scale_to_max(work["events"]), 0.35),
+            (scale_to_max(work["fatalities"]), 0.30),
+            (scale_to_max(displaced_source), 0.25),
+            (scale_to_max(work["population_exposure"]), 0.10),
+        ]
+        score = pd.Series(0.0, index=work.index, dtype="float64")
+        active_weight = 0.0
+        for component, weight in components:
+            if float(component.sum()) > 0:
+                score = score + component * weight
+                active_weight += weight
+        if active_weight <= 0:
+            return score
+        return score / active_weight
 
     if displacement_mode == "peak":
         disp_agg = get_peak_displacement(disp_in_rows, ["admin1_norm"], "displaced_in")
-        pri_slice = filter_to_period(pri_rows, get_latest_period(pri_rows))
-        period_label = "Peak arrivals across the selected range"
-        displacement_hover_label = "Peak displaced in"
-        xaxis_title = "Peak Displaced Arrivals"
-        yaxis_title = "Latest Priority Score Snapshot"
-    else:
-        snapshot_period = (
-            snapshot_period
-            or get_latest_period(disp_in_rows, pri_rows, intersection=True)
-            or get_latest_period(disp_in_rows)
-            or get_latest_period(pri_rows)
+        priority_period = get_latest_period(pri_rows) or get_latest_period(conflict_rows)
+        pri_slice = filter_to_period(pri_rows, priority_period) if priority_period else pd.DataFrame()
+        conflict_period = priority_period
+        priority_period_text = format_period_label(priority_period)
+        period_label = (
+            f"peak displacement with priority inputs from {priority_period_text}"
+            if priority_period_text else "peak displacement with the latest available priority inputs"
         )
-        pri_slice = filter_to_period(pri_rows, snapshot_period)
+        displacement_hover_label = "Peak displaced"
+        xaxis_title = "Peak Displaced"
+        yaxis_title = "Latest Priority Score"
+    else:
+        if snapshot_period is None:
+            snapshot_period = (
+                get_latest_period(disp_in_rows, pri_rows, intersection=True)
+                or get_latest_period(disp_in_rows)
+                or get_latest_period(pri_rows)
+                or get_latest_period(conflict_rows)
+            )
+        pri_slice = filter_to_period(pri_rows, snapshot_period) if snapshot_period else pd.DataFrame()
+        conflict_period = snapshot_period
         disp_agg, _ = get_latest_displacement_snapshot(
-            disp_in_rows,
-            ["admin1_norm"],
-            "displaced_in",
-            period=snapshot_period,
+            disp_in_rows, ["admin1_norm"], "displaced_in", period=snapshot_period,
         )
         period_text = format_period_label(snapshot_period)
         period_label = period_text or "the latest available month"
-        displacement_hover_label = "Latest displaced in snapshot"
+        displacement_hover_label = f"Displaced · {period_text}" if period_text else "Displaced (snapshot)"
         xaxis_title = (
-            f"Displaced Arrivals Snapshot ({period_text})"
-            if period_text else "Displaced Arrivals Snapshot"
+            f"Displaced — {period_text}" if period_text else "Displaced (snapshot)"
         )
         yaxis_title = (
-            f"Priority Score Snapshot ({period_text})"
-            if period_text else "Priority Score Snapshot"
+            f"Priority Score — {period_text}" if period_text else "Priority Score (snapshot)"
         )
 
-    if pri_slice.empty:
-        st.info("No priority score snapshot is available for this country.")
+    if disp_agg is None or disp_agg.empty:
+        disp_agg = pd.DataFrame(columns=["admin1_norm", "displaced_in"])
+
+    pri_agg = _aggregate_priority_rows(pri_slice)
+    conflict_agg = _aggregate_conflict_rows(conflict_rows, conflict_period)
+
+    # priority_score_country is a country-level score — use first(), not mean().
+    sdf = pd.DataFrame({"admin1_norm": pd.Series(dtype="object")})
+    for frame in [disp_agg, pri_agg]:
+        if frame is not None and not frame.empty:
+            sdf = frame.copy() if sdf.empty else sdf.merge(frame, on="admin1_norm", how="outer")
+    if not conflict_agg.empty:
+        conflict_join = conflict_agg.rename(
+            columns={
+                "events": "events_conflict",
+                "fatalities": "fatalities_conflict",
+                "population_exposure": "population_exposure_conflict",
+            }
+        )
+        sdf = conflict_join.copy() if sdf.empty else sdf.merge(conflict_join, on="admin1_norm", how="outer")
+
+    if sdf.empty:
+        st.info("No conflict, displacement, or priority rows are available for this snapshot.")
         return
 
-    agg_d = {"events": "sum", "fatalities": "sum"}
-    for c in ["priority_score_country", "displaced", "population_exposure"]:
-        if c in pri_slice.columns:
-            agg_d[c] = "mean" if "score" in c else "sum"
-    sdf = pri_slice.groupby("admin1_norm", as_index=False).agg(agg_d)
-    sdf = sdf.merge(disp_agg, how="left", on="admin1_norm")
+    for metric in ["events", "fatalities", "population_exposure"]:
+        base = (
+            pd.to_numeric(sdf[metric], errors="coerce")
+            if metric in sdf.columns
+            else pd.Series(index=sdf.index, dtype="float64")
+        )
+        conflict_col = f"{metric}_conflict"
+        if conflict_col in sdf.columns:
+            conflict_values = pd.to_numeric(sdf[conflict_col], errors="coerce")
+            sdf[metric] = conflict_values.combine_first(base).fillna(0.0)
+            sdf = sdf.drop(columns=[conflict_col])
+        else:
+            sdf[metric] = base.fillna(0.0)
 
     name_map = {}
     if boundary_gdf is not None and not boundary_gdf.empty:
@@ -2323,9 +2676,18 @@ def render_displacement_snapshot_priority_scatter(
             sdf[col] = 0.0
         sdf[col] = pd.to_numeric(sdf[col], errors="coerce").fillna(0.0)
 
+    fallback_score = _fallback_priority_score(sdf)
+    real_score = pd.to_numeric(sdf["priority_score_country"], errors="coerce").fillna(0.0)
+    missing_score = real_score <= 0
+    fallback_used = bool(float(fallback_score[missing_score].sum()) > 0)
+    sdf["priority_score_country"] = real_score.where(~missing_score, fallback_score)
+    sdf["score_source"] = "Priority model"
+    if fallback_used:
+        sdf.loc[missing_score & (fallback_score > 0), "score_source"] = "Estimated from same-period inputs"
+
     sdf = sdf[sdf["priority_score_country"] > 0].copy()
     if sdf.empty:
-        st.info("No priority score data to display.")
+        st.info("No conflict, displacement, exposure, or priority signal is available for this snapshot.")
         return
 
     max_fat = float(sdf["fatalities"].max()) or 1.0
@@ -2343,6 +2705,12 @@ def render_displacement_snapshot_priority_scatter(
     )
 
     max_exp = float(sdf["population_exposure"].max()) or 1.0
+    score_note = (
+        "Precomputed priority scores were missing for some regions, so those scores are estimated from "
+        "same-period events, fatalities, displacement, and exposure."
+        if fallback_used else
+        "Priority scores come from the precomputed priority model for this snapshot."
+    )
 
     st.markdown(f"""
     <div style="padding:20px 0 10px 0;">
@@ -2351,10 +2719,11 @@ def render_displacement_snapshot_priority_scatter(
       </p>
       <p style="font-family:'Inter',sans-serif;font-size:14px;color:#5a6577;line-height:1.85;margin:0;max-width:680px;">
         This chart uses <strong>the latest shared displacement and priority snapshot in {period_label}</strong>.
-        Regions with fewer arrivals can still rank highest if they also face intense conflict,
+        Regions with lower displacement can still rank highest if they also face intense conflict,
         high fatality rates, or large population exposure. Each circle is one admin area:
-        horizontal position shows displaced arrivals, vertical position shows priority score,
+        horizontal position shows displaced people, vertical position shows priority score,
         circle size scales with fatalities, and color reflects population exposure.
+        {score_note}
       </p>
     </div>
     """, unsafe_allow_html=True)
@@ -2392,6 +2761,7 @@ def render_displacement_snapshot_priority_scatter(
             "priority_score_country",
             "population_exposure",
             "events",
+            "score_source",
         ]].values,
         hovertemplate=(
             "<b>%{customdata[0]}</b><br>"
@@ -2399,7 +2769,8 @@ def render_displacement_snapshot_priority_scatter(
             "Priority score: <b>%{customdata[3]:.3f}</b><br>"
             "Fatalities: %{customdata[2]:,.0f}<br>"
             "Pop. exposure: %{customdata[4]:,.0f}<br>"
-            "Events: %{customdata[5]:,.0f}"
+            "Events: %{customdata[5]:,.0f}<br>"
+            "Score source: %{customdata[6]}"
             "<extra></extra>"
         ),
         showlegend=False,
@@ -2407,8 +2778,8 @@ def render_displacement_snapshot_priority_scatter(
 
     med_x = float(sdf["displaced_in"].median())
     med_y = float(sdf["priority_score_country"].median())
-    x_max = float(sdf["displaced_in"].max()) * 1.08
-    y_max = float(sdf["priority_score_country"].max()) * 1.12
+    x_max = max(float(sdf["displaced_in"].max()) * 1.08, 1.0)
+    y_max = max(float(sdf["priority_score_country"].max()) * 1.12, 0.05)
 
     for xv, yv, lbl, anchor in [
         (x_max * 0.55, y_max * 0.97, "HIGH PRIORITY · HIGH DISPLACEMENT", "center"),
@@ -2505,11 +2876,11 @@ LIGHT_LAYOUT = dict(
     margin=dict(l=0, r=0, t=50, b=0),
 )
 
-SCALE_BLUE  = [[0,"#f4f7fb"],[0.25,"#d2dceb"],[0.5,"#8fa7c9"],[0.75,"#4f6c95"],[1,"#2c4a6e"]]
-SCALE_BUBBLE = [[0,"#dce8f4"],[0.25,"#b7cbe1"],[0.5,"#84a4c3"],[0.75,"#4e7098"],[1,"#1a2e48"]]
-SCALE_WARM  = [[0,"#fbf6f0"],[0.25,"#f2e0cc"],[0.5,"#dcb48a"],[0.75,"#b8703a"],[1,"#7a4418"]]
-SCALE_TEAL  = [[0,"#f1f7f5"],[0.25,"#d0e3dd"],[0.5,"#95bcb0"],[0.75,"#5a8a82"],[1,"#2e5652"]]
-SCALE_GOLD  = [[0,"#faf5ea"],[0.25,"#ecd9ad"],[0.5,"#c8a26a"],[0.75,"#a8864a"],[1,"#6e5727"]]
+SCALE_BLUE  = [[0,"#eff3ff"],[0.25,"#bdd7e7"],[0.5,"#6baed6"],[0.75,"#2171b5"],[1,"#08306b"]]
+SCALE_BUBBLE = [[0,"#c6dbef"],[0.25,"#9ecae1"],[0.5,"#4292c6"],[0.75,"#2171b5"],[1,"#08306b"]]
+SCALE_WARM  = [[0,"#fff5eb"],[0.25,"#fdd0a2"],[0.5,"#fd8d3c"],[0.75,"#d94801"],[1,"#7f2704"]]
+SCALE_TEAL  = [[0,"#e5f5f9"],[0.25,"#99d8c9"],[0.5,"#41ae76"],[0.75,"#006d2c"],[1,"#00441b"]]
+SCALE_GOLD  = [[0,"#ffffd4"],[0.25,"#fed98e"],[0.5,"#fe9929"],[0.75,"#cc4c02"],[1,"#662506"]]
 
 # ──────────────────────────────────────────────────
 # DATA LOADERS
@@ -2560,12 +2931,19 @@ def load_admin_conflict():
     if "month_num" not in df.columns:
         df["month_num"] = df["month"].map(MONTH_MAP)
     df = df[df["year"].notna() & df["month"].notna() & df["month_num"].notna() &
-            df["country"].notna() & df["event_type"].notna() & df["admin1"].notna()].copy()
+            df["country"].notna() & df["event_type"].notna()].copy()
     df["year"] = df["year"].astype(int)
     df["month_num"] = df["month_num"].astype(int)
+    if "iso3" in df.columns:
+        df["iso3"] = pd.to_numeric(df["iso3"], errors="coerce")
+        df["iso_n3"] = df["iso3"].fillna(0).astype(int).astype(str).str.zfill(3)
+    if "admin1" not in df.columns:
+        df["admin1"] = hierarchy.UNKNOWN_ADMIN1_LABEL
+    df["admin1"] = df["admin1"].where(df["admin1"].notna(), hierarchy.UNKNOWN_ADMIN1_LABEL)
+    df["admin1"] = df["admin1"].replace({"nan": hierarchy.UNKNOWN_ADMIN1_LABEL, "None": hierarchy.UNKNOWN_ADMIN1_LABEL, "": hierarchy.UNKNOWN_ADMIN1_LABEL})
     df["country_norm"] = df["country"].apply(canonical_country_norm)
     df["admin1_norm"] = df.apply(lambda row: standardize_admin_name(row["admin1"], row["country"]), axis=1)
-    df = df[df["admin1_norm"].notna()].copy()
+    df["admin1_norm"] = df["admin1_norm"].fillna(hierarchy.UNKNOWN_ADMIN1_NORM)
     df = df[(df["year"] >= MIN_YEAR) & (df["year"] <= MAX_YEAR)].copy()
     return df
 
@@ -2603,7 +2981,7 @@ def load_admin1_priority():
             df[col] = df[col].astype(str).str.strip()
     numeric_cols = [
         "year", "month_num", "events", "fatalities", "population_exposure", "displaced",
-        "displaced_in", "displaced_from", "centroid_latitude", "centroid_longitude",
+        "displaced_in", "centroid_latitude", "centroid_longitude",
         "events_norm_country", "fatalities_norm_country", "displaced_norm_country", "exposure_norm_country",
         "priority_score_country", "priority_rank_country",
         "events_norm_global", "fatalities_norm_global", "displaced_norm_global", "exposure_norm_global",
@@ -2634,23 +3012,6 @@ def load_displacement_dest():
     df["year"] = pd.to_numeric(df["year"], errors="coerce")
     df["month_num"] = pd.to_numeric(df["month_num"], errors="coerce")
     df["displaced_in"] = pd.to_numeric(df["displaced_in"], errors="coerce").fillna(0)
-    df = df[df["year"].notna() & df["month_num"].notna() & df["admin1_norm"].notna()].copy()
-    df["year"] = df["year"].astype(int)
-    df["month_num"] = df["month_num"].astype(int)
-    df = df[(df["year"] >= MIN_YEAR) & (df["year"] <= MAX_YEAR)].copy()
-    return df
-
-@st.cache_data(show_spinner=False)
-def load_displacement_origin():
-    if not displacement_origin_path.exists():
-        return pd.DataFrame(columns=["country","country_name","year","month_num","month","admin1_norm","displaced_from"])
-    df = pd.read_csv(displacement_origin_path)
-    df["country"] = df["country"].apply(canonical_country_norm)
-    df["admin1_norm"] = df.apply(lambda r: standardize_admin_name(r["admin1_norm"], r["country"]), axis=1)
-    df["month"] = df["month"].astype(str).str.strip()
-    df["year"] = pd.to_numeric(df["year"], errors="coerce")
-    df["month_num"] = pd.to_numeric(df["month_num"], errors="coerce")
-    df["displaced_from"] = pd.to_numeric(df["displaced_from"], errors="coerce").fillna(0)
     df = df[df["year"].notna() & df["month_num"].notna() & df["admin1_norm"].notna()].copy()
     df["year"] = df["year"].astype(int)
     df["month_num"] = df["month_num"].astype(int)
@@ -3058,36 +3419,45 @@ def build_country_admin2_conflict_view(country_admin2_boundary, selected_country
         exact["fatalities"] = 0
         exact["population_exposure"] = 0
 
-        if (total_events > 0 or total_fatalities > 0 or total_exposure > 0) and not basis_rows.empty:
-            basis = (
-                basis_rows.groupby("admin2_norm", as_index=False)
-                .agg({
-                    "events": "sum",
-                    "fatalities": "sum",
-                    "population_exposure": "sum",
-                })
-            )
-            exact = exact.merge(basis, on="admin2_norm", how="left", suffixes=("", "_basis"))
-            event_weights = exact.get("events_basis", 0)
-            fatality_weights = exact.get("fatalities_basis", event_weights)
-            exposure_weights = exact.get("population_exposure_basis", event_weights)
+        if total_events > 0 or total_fatalities > 0 or total_exposure > 0:
+            if not basis_rows.empty:
+                basis = (
+                    basis_rows.groupby("admin2_norm", as_index=False)
+                    .agg({
+                        "events": "sum",
+                        "fatalities": "sum",
+                        "population_exposure": "sum",
+                    })
+                )
+                exact = exact.merge(basis, on="admin2_norm", how="left", suffixes=("", "_basis"))
+                event_weights = _coerce_col(exact, "events_basis")
+                fatality_weights = _coerce_col(exact, "fatalities_basis") if "fatalities_basis" in exact.columns else event_weights
+                exposure_weights = _coerce_col(exact, "population_exposure_basis") if "population_exposure_basis" in exact.columns else event_weights
+                basis_label = f"{basis_period['month']} {basis_period['year']}" if basis_period else "the latest observed district period"
+                basis_scope = "matching district shares" if basis_kind == event_type_norm else "overall district shares"
+                estimate_note = (
+                    f"Estimated district breakdown for {selected_month} {selected_year} using {basis_scope} "
+                    f"from {basis_label} within {admin1_norm.replace('-', ' ').title()}."
+                )
+            else:
+                event_weights = pd.Series(1.0, index=exact.index, dtype="float64")
+                fatality_weights = event_weights
+                exposure_weights = event_weights
+                estimate_note = (
+                    f"Estimated district breakdown for {selected_month} {selected_year} by equal split because "
+                    f"no district-level basis rows were available within {admin1_norm.replace('-', ' ').title()}."
+                )
             exact["events"] = allocate_total_by_weights(total_events, event_weights)
             exact["fatalities"] = allocate_total_by_weights(
                 total_fatalities,
-                fatality_weights if pd.to_numeric(fatality_weights, errors="coerce").fillna(0).sum() > 0 else event_weights,
+                fatality_weights if float(pd.to_numeric(fatality_weights, errors="coerce").fillna(0).sum()) > 0 else event_weights,
             )
             exact["population_exposure"] = allocate_total_by_weights(
                 total_exposure,
-                exposure_weights if pd.to_numeric(exposure_weights, errors="coerce").fillna(0).sum() > 0 else event_weights,
+                exposure_weights if float(pd.to_numeric(exposure_weights, errors="coerce").fillna(0).sum()) > 0 else event_weights,
             )
             exact = exact[["admin2_norm", "events", "fatalities", "population_exposure"]].copy()
             estimated = True
-            basis_label = f"{basis_period['month']} {basis_period['year']}" if basis_period else "the latest observed district period"
-            basis_scope = "matching district shares" if basis_kind == event_type_norm else "overall district shares"
-            estimate_note = (
-                f"Estimated district breakdown for {selected_month} {selected_year} using {basis_scope} "
-                f"from {basis_label} within {admin1_norm.replace('-', ' ').title()}."
-            )
 
     metric_source = (
         exact.groupby("admin2_norm", as_index=False)
@@ -3101,7 +3471,7 @@ def build_country_admin2_conflict_view(country_admin2_boundary, selected_country
     )
     merged = boundary.merge(metric_source, on="admin2_norm", how="left")
     for col in ["events", "fatalities", "population_exposure"]:
-        merged[col] = pd.to_numeric(merged.get(col, 0), errors="coerce").fillna(0)
+        merged[col] = _coerce_col(merged, col)
 
     if estimated:
         merged["has_acled_data"] = False
@@ -3119,83 +3489,208 @@ def build_country_admin2_conflict_view(country_admin2_boundary, selected_country
     return merged, estimated, estimate_note
 
 def build_country_admin2_priority_view(country_admin2_boundary, selected_country_name, admin1_norm, selected_year, selected_month, admin1_row):
-    if canonical_country_norm(selected_country_name) == "lebanon":
-        return build_lebanon_admin2_priority_view(admin1_norm, selected_year, selected_month)
+    country_norm = canonical_country_norm(selected_country_name)
 
-    boundary = country_admin2_boundary[country_admin2_boundary["admin1_norm"] == admin1_norm].copy()
-    if boundary.empty:
-        return boundary, False, None
+    def _fill_parent_metric(values, metric, value, reducer="sum"):
+        if value is None:
+            return
+        if isinstance(value, pd.Series):
+            numeric = pd.to_numeric(value, errors="coerce").fillna(0)
+            filled = float(numeric.mean() if reducer == "mean" else numeric.sum())
+        else:
+            filled = numeric_value({"value": value}, "value")
+        if filled > 0 and numeric_value(values, metric) <= 0:
+            values[metric] = filled
 
-    conflict_frame, conflict_estimated, conflict_note = build_country_admin2_conflict_view(
-        country_admin2_boundary,
-        selected_country_name,
-        admin1_norm,
-        selected_year,
-        selected_month,
-        "All",
-    )
-    if conflict_frame.empty:
-        return boundary, False, None
+    def _supplement_admin1_values(values):
+        values = dict(values or {})
+        month_num = MONTH_MAP.get(
+            str(selected_month).strip(),
+            int(selected_month) if str(selected_month).isdigit() else None,
+        )
+        if month_num is None:
+            return values
 
-    weights = pd.to_numeric(conflict_frame.get("events", 0), errors="coerce").fillna(0)
-    if float(weights.sum()) <= 0:
-        weights = pd.Series([1.0] * len(conflict_frame), index=conflict_frame.index)
-    shares = weights / float(weights.sum())
+        pri_rows = admin1_priority[
+            (admin1_priority["country_norm"] == country_norm) &
+            (admin1_priority["admin1_norm"] == admin1_norm) &
+            (admin1_priority["year"] == int(selected_year)) &
+            (admin1_priority["month_num"] == int(month_num))
+        ].copy()
+        if not pri_rows.empty:
+            for metric in ["events", "fatalities", "population_exposure", "displaced", "displaced_in"]:
+                if metric in pri_rows.columns:
+                    _fill_parent_metric(values, metric, pri_rows[metric])
+            for metric in ["priority_score_country", "priority_score_global"]:
+                if metric in pri_rows.columns:
+                    _fill_parent_metric(values, metric, pri_rows[metric], reducer="mean")
 
-    exact = conflict_frame[
-        [
-            col for col in [
-                "admin2_norm",
-                "events",
-                "fatalities",
-                "population_exposure",
-                "has_acled_data",
-                "acled_match_status",
-                "acled_data_note",
-                "has_acled_data_label",
-            ]
-            if col in conflict_frame.columns
-        ]
-    ].copy()
+        conflict_rows = admin_conflict[
+            (admin_conflict["country_norm"] == country_norm) &
+            (admin_conflict["admin1_norm"] == admin1_norm) &
+            (admin_conflict["year"] == int(selected_year)) &
+            (admin_conflict["month_num"] == int(month_num))
+        ].copy()
+        if not conflict_rows.empty and "event_type" in conflict_rows.columns:
+            all_rows = conflict_rows[
+                conflict_rows["event_type"].astype(str).str.strip().str.lower() == "all"
+            ].copy()
+            if not all_rows.empty:
+                conflict_rows = all_rows
+        if not conflict_rows.empty:
+            for metric in ["events", "fatalities", "population_exposure"]:
+                if metric in conflict_rows.columns:
+                    _fill_parent_metric(values, metric, conflict_rows[metric])
 
-    if admin1_row is None or admin1_row.empty:
-        admin1_values = {}
+        disp_rows = displacement_dest[
+            (displacement_dest["country"] == country_norm) &
+            (displacement_dest["admin1_norm"] == admin1_norm) &
+            (displacement_dest["year"] == int(selected_year)) &
+            (displacement_dest["month_num"] == int(month_num))
+        ].copy()
+        if not disp_rows.empty and "displaced_in" in disp_rows.columns:
+            _fill_parent_metric(values, "displaced_in", disp_rows["displaced_in"])
+            _fill_parent_metric(values, "displaced", disp_rows["displaced_in"])
+        return values
+
+    admin1_values = _supplement_admin1_values(row_to_values(admin1_row))
+
+    if country_norm == "lebanon":
+        merged, conflict_estimated, conflict_note = build_lebanon_admin2_priority_view(
+            admin1_norm,
+            selected_year,
+            selected_month,
+        )
+        if merged.empty:
+            return merged, False, None
     else:
-        admin1_values = admin1_row.iloc[0].to_dict() if hasattr(admin1_row, "iloc") else dict(admin1_row)
+        boundary = country_admin2_boundary[country_admin2_boundary["admin1_norm"] == admin1_norm].copy()
+        if boundary.empty:
+            return boundary, False, None
 
-    for metric in ["displaced", "displaced_in", "displaced_from"]:
-        exact[metric] = allocate_total_by_weights(admin1_values.get(metric, 0), weights)
+        conflict_frame, conflict_estimated, conflict_note = build_country_admin2_conflict_view(
+            country_admin2_boundary,
+            selected_country_name,
+            admin1_norm,
+            selected_year,
+            selected_month,
+            "All",
+        )
+        keep_cols = [
+            "admin2_norm", "events", "fatalities", "population_exposure",
+            "has_acled_data", "acled_match_status", "acled_data_note", "has_acled_data_label",
+        ]
+        if conflict_frame.empty:
+            exact = boundary[["admin2_norm"]].drop_duplicates().copy()
+            exact["events"] = 0
+            exact["fatalities"] = 0
+            exact["population_exposure"] = 0
+            exact["has_acled_data"] = False
+            exact["acled_match_status"] = "No matched events"
+            exact["acled_data_note"] = "No matched events"
+            exact["has_acled_data_label"] = "No"
+        else:
+            exact = conflict_frame[[col for col in keep_cols if col in conflict_frame.columns]].copy()
+        exact = ensure_numeric_columns(exact, ["events", "fatalities", "population_exposure"])
+
+        if conflict_estimated:
+            exact["has_acled_data"] = False
+            exact["acled_match_status"] = "Estimated from admin1 totals"
+            exact["acled_data_note"] = "Estimated from admin1 totals"
+        elif "has_acled_data" not in exact.columns:
+            exact["has_acled_data"] = (
+                (exact["events"] > 0) |
+                (exact["fatalities"] > 0) |
+                (exact["population_exposure"] > 0)
+            )
+
+        merged = boundary.merge(exact, on="admin2_norm", how="left")
+
+    merged = ensure_numeric_columns(
+        merged,
+        [
+            "events", "fatalities", "population_exposure", "displaced", "displaced_in",
+            "priority_score_country", "priority_score_global", "access_risk",
+            "demographic_vulnerability", "health_priority_score", "education_priority_score",
+        ],
+    )
+
+    # If the district layer has no real/estimated conflict for this period but
+    # the parent admin1 row does, allocate parent totals so the drilldown is not
+    # an all-zero view.
+    weights = district_signal_weights(merged)
+    parent_distributed = False
+    for metric in ["events", "fatalities", "population_exposure"]:
+        parent_total = numeric_value(admin1_values, metric)
+        if parent_total > 0 and float(merged[metric].sum()) <= 0:
+            merged[metric] = allocate_total_by_weights(parent_total, weights)
+            parent_distributed = True
+
+    weights = district_signal_weights(merged)
+    for metric in ["displaced", "displaced_in"]:
+        parent_total = numeric_value(admin1_values, metric)
+        if parent_total > 0 and float(merged[metric].sum()) <= 0:
+            merged[metric] = allocate_total_by_weights(parent_total, weights)
+            parent_distributed = True
+
+    weights = district_signal_weights(merged)
+    shares = weights / float(weights.sum()) if len(weights) and float(weights.sum()) > 0 else pd.Series(0.0, index=merged.index)
     for metric in ["priority_score_country", "priority_score_global"]:
-        parent_value = pd.to_numeric(admin1_values.get(metric, 0), errors="coerce")
-        parent_value = float(0 if pd.isna(parent_value) else parent_value)
-        exact[metric] = shares * parent_value
+        parent_value = numeric_value(admin1_values, metric)
+        if parent_value > 0 and float(merged[metric].sum()) <= 0:
+            merged[metric] = shares * parent_value
 
-    exact["priority_score"] = exact.get("priority_score_country", 0)
-    merged = boundary.merge(exact, on="admin2_norm", how="left")
-    for col in [
-        "events", "fatalities", "population_exposure", "displaced", "displaced_in",
-        "displaced_from", "priority_score_country", "priority_score_global", "priority_score",
-    ]:
-        merged[col] = pd.to_numeric(merged.get(col, 0), errors="coerce").fillna(0)
+    merged, _parent_reconciled = hierarchy.reconcile_children_to_parent(
+        merged,
+        admin1_values,
+        ["events", "fatalities", "population_exposure", "displaced", "displaced_in"],
+    )
+    parent_distributed = parent_distributed or _parent_reconciled
+    if float(merged["displaced"].sum()) <= 0 and float(merged["displaced_in"].sum()) > 0:
+        merged["displaced"] = merged["displaced_in"]
+        parent_distributed = True
+    print(f"[hierarchy validation] Country: {selected_country_name}")
+    print(f"[hierarchy validation] Admin1: {admin1_norm}")
+    for _metric in ["events", "fatalities", "population_exposure", "displaced", "displaced_in"]:
+        _parent_total = numeric_value(admin1_values, _metric)
+        _child_total = float(pd.to_numeric(merged[_metric], errors="coerce").fillna(0).sum()) if _metric in merged.columns else 0.0
+        print(f"[hierarchy validation] {_metric}: admin1 total={_parent_total:.3f}; admin2 sum={_child_total:.3f}")
+    merged = compute_admin2_priority_scores(merged)
+
     if "has_acled_data" not in merged.columns:
         merged["has_acled_data"] = False
     else:
         merged["has_acled_data"] = merged["has_acled_data"].fillna(False).astype(bool)
     merged["has_acled_data_label"] = merged["has_acled_data"].map({True: "Yes", False: "No"})
+    default_status = merged["has_acled_data"].map({True: "Matched admin2 conflict data", False: "No matched events"})
     if "acled_match_status" not in merged.columns:
-        merged["acled_match_status"] = merged["has_acled_data"].map(
-            {True: "Matched admin2 conflict data", False: "No matched events"}
-        )
+        merged["acled_match_status"] = default_status
+    else:
+        merged["acled_match_status"] = merged["acled_match_status"].fillna(default_status)
     if "acled_data_note" not in merged.columns:
-        merged["acled_data_note"] = merged["has_acled_data"].map(
-            {True: "Matched admin2 conflict data", False: "No matched events"}
+        merged["acled_data_note"] = default_status
+    else:
+        merged["acled_data_note"] = merged["acled_data_note"].fillna(default_status)
+
+    if conflict_estimated or parent_distributed:
+        merged["district_value_source"] = "Estimated from admin1 totals"
+    else:
+        merged["district_value_source"] = merged["has_acled_data"].map(
+            {True: "Matched admin2 data", False: "No matched district data"}
         )
-    estimate_note = (
-        "District priority and displacement values are estimated from admin1 totals using district conflict shares."
-    )
+    merged["displacement_data_note"] = "Displacement estimated from admin1 snapshot totals"
+
+    estimate_bits = []
     if conflict_estimated and conflict_note:
-        estimate_note = f"{estimate_note} {conflict_note}"
-    return merged, True, estimate_note
+        estimate_bits.append(conflict_note)
+    if parent_distributed:
+        estimate_bits.append(
+            "Some district metrics were estimated from admin1 totals using district conflict, exposure, displacement, or equal weights."
+        )
+    if numeric_value(admin1_values, "displaced") > 0 or numeric_value(admin1_values, "displaced_in") > 0:
+        estimate_bits.append("District displacement is estimated from the admin1 snapshot total.")
+    estimate_note = " ".join(dict.fromkeys(estimate_bits)) or None
+    return merged, bool(conflict_estimated or parent_distributed), estimate_note
 
 def _summarize_acled_match_status(frame):
     try:
@@ -3249,10 +3744,10 @@ def load_lebanon_acled_admin2_matches():
     df = df[df["year"].between(MIN_YEAR, MAX_YEAR)].copy()
     df["month_num"] = df["event_date"].dt.month.astype(int)
     df["month"] = df["event_date"].dt.strftime("%B")
-    df["fatalities"] = pd.to_numeric(df.get("fatalities", 0), errors="coerce").fillna(0)
-    df["population_exposure"] = pd.to_numeric(df.get("population_best", 0), errors="coerce").fillna(0)
-    df["latitude"] = pd.to_numeric(df.get("latitude", None), errors="coerce")
-    df["longitude"] = pd.to_numeric(df.get("longitude", None), errors="coerce")
+    df["fatalities"] = _coerce_col(df, "fatalities")
+    df["population_exposure"] = _coerce_col(df, "population_best")
+    df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce") if "latitude" in df.columns else pd.Series(float("nan"), index=df.index)
+    df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce") if "longitude" in df.columns else pd.Series(float("nan"), index=df.index)
     df["admin1_norm"] = df["admin1"].apply(lambda value: standardize_admin_name(value, "Lebanon"))
     df["admin2_norm_direct"] = df["admin2"].apply(standardize_lebanon_admin2_name)
 
@@ -3425,8 +3920,7 @@ def render_lebanon_admin2_drilldown(
             else pd.DataFrame(columns=["admin2_norm", "events", "fatalities", "population_exposure"])
         )
         merged = admin2_boundary.merge(agg, on="admin2_norm", how="left")
-        for col in ["events", "fatalities", "population_exposure"]:
-            merged[col] = pd.to_numeric(merged.get(col, 0), errors="coerce").fillna(0)
+        merged = ensure_numeric_columns(merged, ["events", "fatalities", "population_exposure"])
 
         if detail_rows.empty:
             st.info(
@@ -3480,8 +3974,10 @@ def render_lebanon_admin2_drilldown(
     ].copy()
     detail_metric = selected_metric if selected_metric in {"events", "fatalities"} else "priority_score"
     merged = admin2_boundary.merge(detail_rows, on="admin2_norm", how="left")
-    for col in ["events", "fatalities", "priority_score", "priority_rank", "access_risk", "demographic_vulnerability"]:
-        merged[col] = pd.to_numeric(merged.get(col, 0), errors="coerce").fillna(0)
+    merged = ensure_numeric_columns(
+        merged,
+        ["events", "fatalities", "priority_score", "priority_rank", "access_risk", "demographic_vulnerability"],
+    )
 
     if detail_rows.empty:
         st.info(
@@ -3557,13 +4053,94 @@ def render_lebanon_admin2_drilldown(
 # ──────────────────────────────────────────────────
 ensure_required_files()
 
-country_conflict    = load_country_conflict()
+country_conflict_source = load_country_conflict()
 admin_conflict      = load_admin_conflict()
+_conflict_metrics = ["events", "fatalities", "population_exposure"]
+_conflict_keys = ["country_norm", "year", "month_num", "month", "event_type"]
+admin_conflict = hierarchy.reconcile_admin1_with_country_totals(
+    admin_conflict,
+    country_conflict_source,
+    key_cols=_conflict_keys,
+    metric_cols=_conflict_metrics,
+    admin1_col="admin1_norm",
+    admin1_label_col="admin1",
+)
+country_conflict = hierarchy.aggregate_country_from_admin1(
+    admin_conflict,
+    key_cols=_conflict_keys,
+    metric_cols=_conflict_metrics,
+)
+_iso_lookup = (
+    country_conflict_source[["country_norm", "iso3", "iso_n3", "country"]]
+    .drop_duplicates("country_norm")
+)
+country_conflict = country_conflict.merge(
+    _iso_lookup,
+    on="country_norm",
+    how="left",
+    suffixes=("", "_src"),
+)
+for _col in ["country", "iso3", "iso_n3"]:
+    _src = f"{_col}_src"
+    if _src in country_conflict.columns:
+        if _col in country_conflict.columns:
+            country_conflict[_col] = country_conflict[_col].fillna(country_conflict[_src])
+        else:
+            country_conflict[_col] = country_conflict[_src]
+        country_conflict = country_conflict.drop(columns=[_src])
+hierarchy.validate_hierarchy_totals(
+    country_conflict,
+    admin_conflict,
+    key_cols=_conflict_keys,
+    metric_cols=_conflict_metrics,
+    label="country -> admin1 conflict",
+)
 country_priority    = load_country_priority()
 admin1_priority     = load_admin1_priority()
 displacement_dest   = load_displacement_dest()
-displacement_origin = load_displacement_origin()
 world               = load_world()
+
+_priority_metrics = ["events", "fatalities", "population_exposure", "displaced", "displaced_in"]
+_priority_keys = ["country_norm", "year", "month_num", "month"]
+admin1_priority = hierarchy.reconcile_admin1_with_country_totals(
+    admin1_priority,
+    country_priority,
+    key_cols=_priority_keys,
+    metric_cols=_priority_metrics,
+    admin1_col="admin1_norm",
+    admin1_label_col=None,
+)
+_country_priority_raw = hierarchy.aggregate_country_from_admin1(
+    admin1_priority,
+    key_cols=_priority_keys,
+    metric_cols=_priority_metrics,
+)
+country_priority = country_priority.merge(
+    _country_priority_raw[_priority_keys + [col for col in _priority_metrics if col in _country_priority_raw.columns]],
+    on=_priority_keys,
+    how="left",
+    suffixes=("", "_hier"),
+)
+for _metric in _priority_metrics:
+    _hier_col = f"{_metric}_hier"
+    if _hier_col in country_priority.columns:
+        country_priority[_metric] = pd.to_numeric(country_priority[_hier_col], errors="coerce").fillna(
+            hierarchy.numeric_series(country_priority, _metric)
+        )
+        country_priority = country_priority.drop(columns=[_hier_col])
+hierarchy.validate_hierarchy_totals(
+    country_priority,
+    admin1_priority,
+    key_cols=_priority_keys,
+    metric_cols=[col for col in _priority_metrics if col in country_priority.columns and col in admin1_priority.columns],
+    label="country -> admin1 priority inputs",
+)
+
+# Enrich priority data with iso_n3 from conflict data for reliable world-map merges
+_iso_map = country_conflict.groupby("country_norm")["iso_n3"].first()
+if "iso_n3" not in country_priority.columns:
+    country_priority = country_priority.copy()
+    country_priority["iso_n3"] = country_priority["country_norm"].map(_iso_map)
 
 # ──────────────────────────────────────────────────
 # SESSION STATE
@@ -3726,11 +4303,16 @@ if st.session_state["view"] == "world":
             filtered.groupby(["iso_n3","country","country_norm"], as_index=False)
             .agg({"events":"sum","fatalities":"sum","population_exposure":"sum"})
         )
-        merged_w = world.merge(country_period, how="left", on=["iso_n3","country_norm"])
+        merged_w = world.merge(
+            country_period[["iso_n3","country","events","fatalities","population_exposure"]],
+            how="left", on="iso_n3",
+        )
         merged_w["events"] = merged_w["events"].fillna(0)
         merged_w["fatalities"] = merged_w["fatalities"].fillna(0)
         merged_w["population_exposure"] = merged_w["population_exposure"].fillna(0)
         merged_w["country"] = merged_w["country"].fillna(merged_w["country_name_geo"])
+        if "country_norm" not in merged_w.columns:
+            merged_w["country_norm"] = merged_w["country"].apply(canonical_country_norm)
 
         total_ev = int(country_period["events"].sum())
         total_fat = int(country_period["fatalities"].sum())
@@ -3893,12 +4475,25 @@ if st.session_state["view"] == "world":
             index=0,
             label_visibility="collapsed",
         )
+        displacement_mode = displacement_mode_key(
+            st.sidebar.radio(
+                "Displacement Mode",
+                ["Snapshot", "Cumulative"],
+                horizontal=True,
+            )
+        )
 
         filtered = base_df[(base_df["year"] == selected_year) &
                            (base_df["month"].str.lower() == selected_month.lower())].copy()
         if filtered.empty:
             st.warning("No priority data for selected filters.")
             st.stop()
+
+        world_displacement = build_world_displacement_summary(displacement_mode)
+        if selected_country != "All":
+            world_displacement = world_displacement[
+                world_displacement["country_norm"] == canonical_country_norm(selected_country)
+            ].copy()
 
         world_pri = (
             filtered.groupby("country_norm", as_index=False)
@@ -3913,19 +4508,72 @@ if st.session_state["view"] == "world":
         )
         cname_lk = filtered.groupby("country_norm", as_index=False)["country"].first()
         world_pri = world_pri.merge(cname_lk, how="left", on="country_norm")
+        if "iso_n3" in filtered.columns:
+            iso_lk = filtered.groupby("country_norm", as_index=False)["iso_n3"].first()
+            world_pri = world_pri.merge(iso_lk, how="left", on="country_norm")
 
-        merged_w = world.merge(world_pri, how="left", on="country_norm")
+        world_pri = world_pri.merge(
+            world_displacement.drop(columns=["country"], errors="ignore"),
+            how="outer",
+            on="country_norm",
+            suffixes=("", "_snapshot"),
+        )
+        for col in ["displaced", "displaced_in"]:
+            snapshot_col = f"{col}_snapshot"
+            if snapshot_col in world_pri.columns:
+                world_pri[col] = pd.to_numeric(world_pri[snapshot_col], errors="coerce").fillna(0)
+                world_pri = world_pri.drop(columns=[snapshot_col])
+            elif col not in world_pri.columns:
+                world_pri[col] = 0
+        world_pri["country"] = world_pri["country"].fillna(
+            world_pri["country_norm"].apply(_country_name_from_displacement)
+        )
+        world_iso_lookup = world.groupby("country_norm")["iso_n3"].first()
+        if "iso_n3" not in world_pri.columns:
+            world_pri["iso_n3"] = pd.NA
+        world_pri["iso_n3"] = world_pri["iso_n3"].fillna(world_pri["country_norm"].map(world_iso_lookup))
+
+        if "iso_n3" in world_pri.columns and world_pri["iso_n3"].notna().any():
+            merged_w = world.merge(
+                world_pri.drop(columns=["country_norm"], errors="ignore"),
+                how="left", on="iso_n3",
+            )
+        else:
+            merged_w = world.merge(world_pri, how="left", on="country_norm")
         for col in [
             "events", "fatalities", "population_exposure", "displaced",
-            "country_priority_score", "health_priority_score", "education_priority_score",
+            "displaced_in", "country_priority_score",
+            "health_priority_score", "education_priority_score",
         ]:
             merged_w[col] = pd.to_numeric(merged_w[col], errors="coerce").fillna(0)
         merged_w["country"] = merged_w["country"].fillna(merged_w["country_name_geo"])
+        if "displacement_date_label" not in merged_w.columns:
+            merged_w["displacement_date_label"] = "No displacement date"
+        else:
+            merged_w["displacement_date_label"] = (
+                merged_w["displacement_date_label"].fillna("No displacement date").astype(str)
+            )
 
         total_ev = int(world_pri["events"].sum())
         total_fat = int(world_pri["fatalities"].sum())
         total_disp = float(world_pri["displaced"].sum())
         ctry_count = int((merged_w["country_priority_score"] > 0).sum())
+        displacement_dates = sorted(
+            d for d in world_pri["displacement_date_label"].dropna().astype(str).unique()
+            if d and d != "No displacement date"
+        )
+        world_displacement_label = (
+            displacement_dates[0]
+            if len(displacement_dates) == 1
+            else "per-country latest dates"
+            if displacement_mode != "cumulative"
+            else "2024-2026"
+        )
+        if displacement_mode != "cumulative" and len(displacement_dates) > 1:
+            st.info(
+                "Displacement snapshots use each country's latest internally consistent date; "
+                "hover a country to see its snapshot month."
+            )
 
         st.markdown(f"""
         <div class="kpi-row">
@@ -3945,7 +4593,7 @@ if st.session_state["view"] == "world":
             <div class="kpi-accent"></div>
             <div class="kpi-label">Displacement Snapshot</div>
             <div class="kpi-value">{fmt_big(total_disp)}</div>
-            <div class="kpi-sub">Latest snapshot · {selected_month} {selected_year}</div>
+            <div class="kpi-sub">{displacement_mode_caption(displacement_mode, world_displacement_label)}</div>
           </div>
           <div class="kpi-card gold">
             <div class="kpi-accent"></div>
@@ -3969,7 +4617,8 @@ if st.session_state["view"] == "world":
                 hover_name="country_name_geo",
                 hover_data={
                     "country":True,"events":True,"fatalities":True,
-                    "displaced":True,"population_exposure":True,
+                    "displaced":True,
+                    "displacement_date_label":True,"population_exposure":True,
                     "country_priority_score":":.3f",
                     "health_priority_score":":.3f",
                     "education_priority_score":":.3f",
@@ -3980,7 +4629,11 @@ if st.session_state["view"] == "world":
                 zoom=0.8,
                 center={"lat": 20, "lon": 10},
                 opacity=0.85,
-                title=f"{metric_label(metric)} — {selected_month} {selected_year}",
+                title=(
+                    displacement_country_chart_title(world_displacement_label, displacement_mode)
+                    if metric == "displaced"
+                    else f"{metric_label(metric)} — {selected_month} {selected_year}"
+                ),
             )
             fig.update_layout(
                 **LIGHT_LAYOUT,
@@ -4024,7 +4677,8 @@ if st.session_state["view"] == "world":
                 hover_name="country_name_geo",
                 hover_data={
                     "country":True,"events":True,"fatalities":True,
-                    "displaced":True,"population_exposure":True,
+                    "displaced":True,
+                    "displacement_date_label":True,"population_exposure":True,
                     "country_priority_score":":.3f",
                     "health_priority_score":":.3f",
                     "education_priority_score":":.3f",
@@ -4035,7 +4689,11 @@ if st.session_state["view"] == "world":
                 zoom=build_mapbox_zoom(sgeo, base_zoom=3.2, max_zoom=7.2),
                 center=build_mapbox_center(sgeo),
                 opacity=0.90,
-                title=f"{selected_country} — {metric_label(metric)}",
+                title=(
+                    displacement_country_chart_title(world_displacement_label, displacement_mode)
+                    if metric == "displaced"
+                    else f"{selected_country} — {metric_label(metric)}"
+                ),
             )
             fig.update_layout(
                 **LIGHT_LAYOUT,
@@ -4401,10 +5059,10 @@ else:
                     use_container_width=True,
                 )
 
-        total_ev = int(merged["events"].sum())
-        total_fat = int(merged["fatalities"].sum())
-        total_exp = float(merged["population_exposure"].sum())
-        conflict_total_subtitle = "Admin1 aggregation"
+        total_ev = int(conflict_slice["events"].sum()) if not conflict_slice.empty else int(merged["events"].sum())
+        total_fat = int(conflict_slice["fatalities"].sum()) if not conflict_slice.empty else int(merged["fatalities"].sum())
+        total_exp = float(conflict_slice["population_exposure"].sum()) if not conflict_slice.empty and "population_exposure" in conflict_slice.columns else float(merged["population_exposure"].sum())
+        conflict_total_subtitle = "Admin1 aggregation incl. Unknown"
 
         if not has_admin_conflict_data and not country_conflict_period_filtered.empty:
             total_ev = int(country_conflict_period_filtered["events"].sum())
@@ -4485,12 +5143,21 @@ else:
                     if not _a1_match.empty
                     else _lbn_drilldown.replace("-", " ").title()
                 )
-                st.markdown(
-                    f'<div style="font-family:Inter,sans-serif;font-size:13px;color:#5a6577;'
-                    f'margin-bottom:10px;padding:8px 14px;background:#eef1f6;border-radius:8px;">'
-                    f'Viewing districts inside <strong style="color:#1b2230;">{_admin1_display}</strong></div>',
-                    unsafe_allow_html=True,
-                )
+                _admin1_label = "Governorate" if selected_country_norm == "lebanon" else "Admin1 Region"
+                _bcol1, _bcol2 = st.columns([1, 5])
+                with _bcol1:
+                    if st.button(f"← Back to {selected_country_name}", key="back_to_admin1_conflict"):
+                        st.session_state.pop("country_admin1_drilldown", None)
+                        st.session_state["country_map_level"] = "admin1"
+                        st.rerun()
+                with _bcol2:
+                    st.markdown(
+                        f'<div style="font-family:Inter,sans-serif;font-size:13px;color:#5a6577;'
+                        f'padding:8px 14px;background:#eef1f6;border-radius:8px;">'
+                        f'{_admin1_label}: <strong style="color:#1b2230;">{_admin1_display}</strong>'
+                        f' — Districts by {metric_label(selected_metric)}</div>',
+                        unsafe_allow_html=True,
+                    )
                 if selected_country_norm == "lebanon":
                     _admin2_gdf, _estimated, _estimate_note = build_lebanon_admin2_conflict_view(
                         _lbn_drilldown, selected_year, selected_month, selected_event_type
@@ -4546,10 +5213,17 @@ else:
                             "has_acled_data_label": "ACLED District Data",
                             "acled_data_note": "District Data Note",
                             "acled_match_status": "Match Method",
+                            "district_value_source": "District Value Source",
+                            "displacement_data_note": "Displacement Note",
                             "population_exposure": "Population Exposure",
+                            "displaced": "Displaced",
+                            "displaced_in": "Displaced",
                             "priority_score": "Priority Score",
+                            "priority_rank": "Priority Rank",
                         },
                     )
+                    if _d_metric in {"priority_score", "priority_score_global"}:
+                        _fig2.update_layout(title=f"Priority by District in {_admin1_display}")
                     _fig2.update_layout(
                         **LIGHT_LAYOUT,
                         height=700,
@@ -4639,37 +5313,30 @@ else:
             ["priority_score_country", "priority_score_global", "events", "fatalities", "displaced", "population_exposure"],
             index=0,
         )
+        displacement_mode = displacement_mode_key(
+            st.sidebar.radio(
+                "Displacement Mode",
+                ["Snapshot", "Cumulative"],
+                horizontal=True,
+            )
+        )
+        country_displacement_admin1, country_displacement_period, country_displacement_label, country_displacement_source, country_displacement_mismatch = build_country_admin1_displacement(
+            selected_country_norm,
+            mode=displacement_mode,
+        )
 
         priority_slice = country_priority_rows[
             (country_priority_rows["year"] == selected_year) &
             (country_priority_rows["month"].str.lower() == selected_month.lower())
         ].copy()
 
-        disp_in_slice = displacement_dest[
-            (displacement_dest["country"] == canonical_country_norm(selected_country_name)) &
-            (displacement_dest["year"] == selected_year) &
-            (displacement_dest["month"].str.lower() == selected_month.lower())
-        ].copy()
-
-        disp_out_slice = displacement_origin[
-            (displacement_origin["country"] == canonical_country_norm(selected_country_name)) &
-            (displacement_origin["year"] == selected_year) &
-            (displacement_origin["month"].str.lower() == selected_month.lower())
-        ].copy()
-
         agg_dict = {"events":"sum", "fatalities":"sum"}
-        if "displaced" in priority_slice.columns:
-            agg_dict["displaced"] = "sum"
         if "population_exposure" in priority_slice.columns:
             agg_dict["population_exposure"] = "sum"
         if "priority_score_country" in priority_slice.columns:
             agg_dict["priority_score_country"] = "mean"
         if "priority_score_global" in priority_slice.columns:
             agg_dict["priority_score_global"] = "mean"
-        if "displaced_in" in priority_slice.columns:
-            agg_dict["displaced_in"] = "sum"
-        if "displaced_from" in priority_slice.columns:
-            agg_dict["displaced_from"] = "sum"
 
         merged = boundary_gdf.merge(
             priority_slice.groupby("admin1_norm", as_index=False).agg(agg_dict),
@@ -4677,38 +5344,50 @@ else:
             left_on="admin_name_norm",
             right_on="admin1_norm",
         )
+        merged = merged.merge(
+            country_displacement_admin1,
+            how="left",
+            left_on="admin_name_norm",
+            right_on="admin1_norm",
+            suffixes=("", "_disp"),
+        )
+        if "admin1_norm_disp" in merged.columns:
+            merged = merged.drop(columns=["admin1_norm_disp"])
 
-        if not disp_in_slice.empty:
-            merged = merged.merge(
-                disp_in_slice.groupby("admin1_norm", as_index=False)["displaced_in"].sum(),
-                how="left",
-                left_on="admin_name_norm",
-                right_on="admin1_norm",
-                suffixes=("", "_dest")
-            )
-        else:
-            merged["displaced_in"] = merged.get("displaced_in", 0)
-
-        if not disp_out_slice.empty:
-            merged = merged.merge(
-                disp_out_slice.groupby("admin1_norm", as_index=False)["displaced_from"].sum(),
-                how="left",
-                left_on="admin_name_norm",
-                right_on="admin1_norm",
-                suffixes=("", "_orig")
-            )
-        else:
-            merged["displaced_from"] = merged.get("displaced_from", 0)
+        for _disp_col in ["displaced", "displaced_in"]:
+            _source_col = f"{_disp_col}_disp"
+            if _source_col in merged.columns:
+                _source_values = pd.to_numeric(merged[_source_col], errors="coerce").fillna(0)
+                _base_values = (
+                    pd.to_numeric(merged[_disp_col], errors="coerce").fillna(0)
+                    if _disp_col in merged.columns
+                    else pd.Series(0, index=merged.index, dtype="float64")
+                )
+                merged[_disp_col] = _source_values.where(_source_values > 0, _base_values)
+                merged = merged.drop(columns=[_source_col])
 
         for col in ["events","fatalities","displaced","population_exposure","priority_score_country",
-                    "priority_score_global","displaced_in","displaced_from"]:
+                    "priority_score_global","displaced_in"]:
             if col not in merged.columns:
                 merged[col] = 0
             merged[col] = pd.to_numeric(merged[col], errors="coerce").fillna(0)
+        merged["displaced"] = merged["displaced"].where(merged["displaced"] > 0, merged["displaced_in"])
+        if "displacement_date_label" not in merged.columns:
+            merged["displacement_date_label"] = country_displacement_label or "No displacement date"
+        else:
+            merged["displacement_date_label"] = merged["displacement_date_label"].fillna(
+                country_displacement_label or "No displacement date"
+            )
+        if "displacement_mode_label" not in merged.columns:
+            merged["displacement_mode_label"] = displacement_mode_caption(displacement_mode, country_displacement_label)
+        else:
+            merged["displacement_mode_label"] = merged["displacement_mode_label"].fillna(
+                displacement_mode_caption(displacement_mode, country_displacement_label)
+            )
 
-        total_priority = float(merged["priority_score_country"].sum())
-        total_disp = float(merged["displaced"].sum())
-        total_ev = int(merged["events"].sum())
+        total_priority = float(hierarchy.numeric_series(priority_slice, "priority_score_country").sum())
+        total_disp = float(country_displacement_admin1["displaced"].sum()) if "displaced" in country_displacement_admin1.columns else float(merged["displaced"].sum())
+        total_ev = int(hierarchy.numeric_series(priority_slice, "events").sum())
 
         st.markdown(f"""
         <div class="kpi-row">
@@ -4722,7 +5401,7 @@ else:
             <div class="kpi-accent"></div>
             <div class="kpi-label">Displacement Snapshot</div>
             <div class="kpi-value">{fmt_big(total_disp)}</div>
-            <div class="kpi-sub">Latest snapshot · {selected_month} {selected_year}</div>
+            <div class="kpi-sub">{displacement_mode_caption(displacement_mode, country_displacement_label)}</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-accent"></div>
@@ -4733,6 +5412,10 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
+        st.caption(
+            "Displaced is the current population present in a region at the snapshot date "
+            "(stock), not a cumulative flow."
+        )
         render_country_need_detail(selected_country_name, selected_country_priority_row)
 
         if selected_metric in ["priority_score_country", "priority_score_global"]:
@@ -4760,7 +5443,8 @@ else:
                 "events":True,"fatalities":True,"displaced":True,
                 "population_exposure":True,"priority_score_country":":.3f",
                 "priority_score_global":":.3f","displaced_in":True,
-                "displaced_from":True,"admin_name_norm":False,
+                "displacement_date_label":True,
+                "admin_name_norm":False,
             },
             mapbox_style="carto-positron",
             center=build_mapbox_center(merged),
@@ -4788,26 +5472,32 @@ else:
                     if not _a1_match.empty
                     else _lbn_drilldown.replace("-", " ").title()
                 )
-                st.markdown(
-                    f'<div style="font-family:Inter,sans-serif;font-size:13px;color:#5a6577;'
-                    f'margin-bottom:10px;padding:8px 14px;background:#eef1f6;border-radius:8px;">'
-                    f'Viewing districts inside <strong style="color:#1b2230;">{_admin1_display}</strong></div>',
-                    unsafe_allow_html=True,
+                _admin1_label = "Governorate" if selected_country_norm == "lebanon" else "Admin1 Region"
+                _bcol1, _bcol2 = st.columns([1, 5])
+                with _bcol1:
+                    if st.button(f"← Back to {selected_country_name}", key="back_to_admin1_priority"):
+                        st.session_state.pop("country_admin1_drilldown", None)
+                        st.session_state["country_map_level"] = "admin1"
+                        st.rerun()
+                with _bcol2:
+                    st.markdown(
+                        f'<div style="font-family:Inter,sans-serif;font-size:13px;color:#5a6577;'
+                        f'padding:8px 14px;background:#eef1f6;border-radius:8px;">'
+                        f'{_admin1_label}: <strong style="color:#1b2230;">{_admin1_display}</strong>'
+                        f' — Districts by {metric_label(selected_metric)}</div>',
+                        unsafe_allow_html=True,
+                    )
+                _admin1_row = merged[merged["admin_name_norm"] == _lbn_drilldown].copy()
+                _admin2_gdf, _estimated, _estimate_note = build_country_admin2_priority_view(
+                    country_admin2_boundary,
+                    selected_country_name,
+                    _lbn_drilldown,
+                    selected_year,
+                    selected_month,
+                    _admin1_row,
                 )
-                if selected_country_norm == "lebanon":
-                    _admin2_gdf, _estimated, _estimate_note = build_lebanon_admin2_priority_view(
-                        _lbn_drilldown, selected_year, selected_month
-                    )
-                else:
-                    _admin1_row = merged[merged["admin_name_norm"] == _lbn_drilldown].copy()
-                    _admin2_gdf, _estimated, _estimate_note = build_country_admin2_priority_view(
-                        country_admin2_boundary,
-                        selected_country_name,
-                        _lbn_drilldown,
-                        selected_year,
-                        selected_month,
-                        _admin1_row,
-                    )
+                if not _admin2_gdf.empty:
+                    _admin2_gdf["displacement_date_label"] = country_displacement_label or "No displacement date"
                 if _estimated and _estimate_note:
                     st.info(_estimate_note)
                 if _admin2_gdf.empty:
@@ -4833,8 +5523,8 @@ else:
                         _d_cscale = SCALE_GOLD
                         _d_fmt = fmt_big
                         _d_label = "Pop. Exposure"
-                    elif selected_metric == "displaced" and "displaced" in _admin2_gdf.columns:
-                        _d_metric = "displaced"
+                    elif selected_metric == "displaced" and "displaced_in" in _admin2_gdf.columns:
+                        _d_metric = "displaced_in"
                         _d_cscale = SCALE_TEAL
                         _d_fmt = fmt_big
                         _d_label = "Displacement Snapshot"
@@ -4843,10 +5533,26 @@ else:
                         _d_cscale = SCALE_BLUE if _d_metric == "priority_score" else SCALE_TEAL
                         _d_fmt = (lambda v: f"{v:.3f}") if _d_metric == "priority_score" else fmt_big
                         _d_label = "Priority Score" if _d_metric == "priority_score" else "Events"
-                    for _col in ["priority_score", "priority_score_country", "priority_score_global", "events", "fatalities", "population_exposure", "displaced"]:
-                        if _col not in _admin2_gdf.columns:
-                            _admin2_gdf[_col] = 0
-                        _admin2_gdf[_col] = pd.to_numeric(_admin2_gdf[_col], errors="coerce").fillna(0)
+                    _admin2_gdf = ensure_numeric_columns(
+                        _admin2_gdf,
+                        [
+                            "priority_score", "priority_score_country", "priority_score_global",
+                            "priority_rank", "events", "fatalities", "population_exposure",
+                            "displaced", "displaced_in",
+                        ],
+                    )
+                    if "district_value_source" not in _admin2_gdf.columns:
+                        _admin2_gdf["district_value_source"] = "Matched admin2 data"
+                    else:
+                        _admin2_gdf["district_value_source"] = _admin2_gdf["district_value_source"].fillna("Matched admin2 data")
+                    if "displacement_data_note" not in _admin2_gdf.columns:
+                        _admin2_gdf["displacement_data_note"] = "No district displacement estimate"
+                    else:
+                        _admin2_gdf["displacement_data_note"] = _admin2_gdf["displacement_data_note"].fillna("No district displacement estimate")
+                    _admin2_gdf["displaced"] = _admin2_gdf["displaced"].where(
+                        _admin2_gdf["displaced"] > 0,
+                        _admin2_gdf["displaced_in"],
+                    )
                     _fig2 = px.choropleth_mapbox(
                         _admin2_gdf,
                         geojson=json.loads(_admin2_gdf.to_json()),
@@ -4859,23 +5565,40 @@ else:
                             "has_acled_data_label": True,
                             "acled_data_note": True,
                             "acled_match_status": True,
+                            "district_value_source": True,
+                            "displacement_data_note": True,
                             "priority_score": ":.3f",
+                            "priority_rank": True,
                             "events": True,
                             "fatalities": True,
                             "population_exposure": True,
+                            "displaced": True,
+                            "displaced_in": True,
+                            "displacement_date_label": True,
                             "admin2_norm": False,
                         },
                         mapbox_style="carto-positron",
                         center=build_mapbox_center(_admin2_gdf),
                         zoom=build_mapbox_zoom(_admin2_gdf, base_zoom=6.6, max_zoom=9.8),
                         opacity=0.9,
-                        title=f"{_admin1_display} — {_d_label} by District",
+                        title=(
+                            f"Latest Displacement Snapshot by District ({_admin1_display}, {country_displacement_label or 'latest available date'})"
+                            if _d_metric in {"displaced", "displaced_in"} and displacement_mode != "cumulative"
+                            else f"Cumulative Displacement by District ({_admin1_display}, 2024-2026)"
+                            if _d_metric in {"displaced", "displaced_in"}
+                            else f"{_admin1_display} — {_d_label} by District"
+                        ),
                         labels={
                             "has_acled_data_label": "ACLED District Data",
                             "acled_data_note": "District Data Note",
                             "acled_match_status": "Match Method",
+                            "district_value_source": "District Value Source",
+                            "displacement_data_note": "Displacement Note",
                             "population_exposure": "Population Exposure",
+                            "displaced": "Displaced",
+                            "displaced_in": "Displaced",
                             "priority_score": "Priority Score",
+                            "priority_rank": "Priority Rank",
                         },
                     )
                     _fig2.update_layout(
@@ -4887,6 +5610,16 @@ else:
                             title_font=dict(family="Inter", size=11, color="#1b2230"),
                         ),
                     )
+                    if _d_metric in {"priority_score", "priority_score_global"}:
+                        _fig2.update_layout(
+                            title=dict(
+                                text=f"Priority by District in {_admin1_display}",
+                                font=dict(family="Playfair Display", size=16, color="#1b2230"),
+                                x=0.02,
+                                xanchor="left",
+                                y=0.97,
+                            )
+                        )
                     st.plotly_chart(_fig2, use_container_width=True, key="country_priority_map")
                     st.markdown(
                         f'<div class="section-title"><span class="section-dot"></span>'
@@ -4960,27 +5693,21 @@ else:
     # ─────────────────────────────────────────────
     cnorm_story = canonical_country_norm(selected_country_name)
     story_displacement_mode = "latest"
-    story_disp_in_rows = displacement_dest[displacement_dest["country"] == cnorm_story].copy()
-    story_disp_out_rows = displacement_origin[displacement_origin["country"] == cnorm_story].copy()
+    story_disp_in_rows  = displacement_dest[displacement_dest["country"] == cnorm_story].copy()
+    pri_rows_story      = admin1_priority[admin1_priority["country_norm"] == cnorm_story].copy()
+
+    story_snapshot_period, _period_source, _period_mismatch = resolve_displacement_period(
+        story_disp_in_rows, None, pri_rows_story
+    )
+
     story_arrivals_snapshot, story_arrivals_period = get_latest_displacement_snapshot(
-        story_disp_in_rows,
-        ["admin1_norm"],
-        "displaced_in",
-    )
-    story_departures_snapshot, story_departures_period = get_latest_displacement_snapshot(
-        story_disp_out_rows,
-        ["admin1_norm"],
-        "displaced_from",
-    )
-    story_snapshot_period = (
-        story_arrivals_period
-        or get_latest_period(country_priority_rows)
-        or story_departures_period
+        story_disp_in_rows, ["admin1_norm"], "displaced_in", period=story_snapshot_period
     )
     story_snapshot_label = format_period_label(story_snapshot_period) or "the latest available month"
+
     st.markdown(
         '<div class="section-title" style="margin-top:36px;">'
-        '<span class="section-dot"></span>Displacement Story - Latest Snapshot</div>',
+        f'<span class="section-dot"></span>Displacement Snapshot — {story_snapshot_label}</div>',
         unsafe_allow_html=True,
     )
 
@@ -4996,8 +5723,6 @@ else:
             boundary_gdf,
             story_arrivals_snapshot,
             story_arrivals_period,
-            story_departures_snapshot,
-            story_departures_period,
             displacement_mode=story_displacement_mode,
         )
 
@@ -5005,17 +5730,16 @@ else:
         st.markdown(f"""
         <div style="padding:20px 0 10px 0;">
           <p style="font-family:'Playfair Display',serif;font-size:22px;font-weight:600;color:#1b2230;line-height:1.4;margin:0 0 10px 0;">
-            Where are people moving across {selected_country_name}?
+            Where are displaced people concentrated across {selected_country_name}?
           </p>
           <p style="font-family:'Inter',sans-serif;font-size:14px;color:#5a6577;line-height:1.85;margin:0 0 4px 0;max-width:680px;">
             Each circle represents one admin1 area.
-            <strong>Size</strong> reflects displaced arrivals in {story_snapshot_label}.
+            <strong>Size</strong> reflects displaced people in {story_snapshot_label}.
             <strong>Color</strong> shows the priority score for the same snapshot where available.
-            Departure values are shown for that same month when data exists, rather than summing all months together.
           </p>
           <p style="font-family:'Inter',sans-serif;font-size:12px;color:#8893a4;line-height:1.6;margin:0;">
             Snapshot month: <strong style="color:#1b2230;">{story_snapshot_label}</strong>.
-            Hover any circle for arrivals, departures, priority, and conflict context.
+            Hover any circle for displacement, priority, and conflict context.
           </p>
         </div>
         """, unsafe_allow_html=True)

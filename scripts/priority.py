@@ -31,7 +31,7 @@ acled_files = [
     Path("data/raw/global/regions_2026/US-and-Canada_aggregated_data_up_to_week_of-2026-03-28.xlsx"),
 ]
 
-displacement_path = Path("data/cleaned/displacement/displacement_unified_allcountries_2024_2026.csv")
+displacement_dest_path = Path("data/cleaned/global/displacement_admin1_destination_monthly_2024_2026.csv")
 
 output_dir = Path("data/cleaned/global")
 output_dir.mkdir(parents=True, exist_ok=True)
@@ -279,40 +279,43 @@ admin1_monthly = admin1_monthly.dropna(subset=["country", "admin1_norm"]).copy()
 
 # ==================================================
 # LOAD DISPLACEMENT
-# expects:
-# country, year, month_num, month, admin1_norm, displaced_in, displaced_from
+# Admin1 displacement stock snapshots.
 # ==================================================
-displacement = pd.read_csv(displacement_path)
-displacement.columns = [str(c).strip() for c in displacement.columns]
+if not displacement_dest_path.exists():
+    displacement = pd.DataFrame(
+        columns=[
+            "country",
+            "admin1_norm",
+            "year",
+            "month_num",
+            "displaced_in",
+            DISPLACEMENT_ADJUSTED_FLAG_COL,
+            DISPLACEMENT_SOURCE_NOTE_COL,
+        ]
+    )
+else:
+    displacement = pd.read_csv(displacement_dest_path)
+    displacement.columns = [str(c).strip() for c in displacement.columns]
 
 required_disp_cols = ["country", "admin1_norm", "year", "month_num", "displaced_in"]
-missing_disp = [c for c in required_disp_cols if c not in displacement.columns]
+missing_disp = [col for col in required_disp_cols if col not in displacement.columns]
 if missing_disp:
-    raise ValueError(f"Missing displacement columns: {missing_disp}")
+    raise ValueError(f"Missing displacement columns in {displacement_dest_path}: {missing_disp}")
 
 displacement["country"] = displacement["country"].apply(standardize_country)
 displacement["admin1_norm"] = displacement.apply(
     lambda r: standardize_admin1(r["admin1_norm"], r["country"]),
-    axis=1
+    axis=1,
 )
-
-# fix naming mismatches with ACLED
 displacement["admin1_norm"] = displacement["admin1_norm"].replace({
     "baalbek-el hermel": "baalbek-hermel",
     "baalbek el hermel": "baalbek-hermel",
     "el nabatieh": "al nabatieh",
     "nabatieh": "al nabatieh",
 })
-
 displacement["year"] = pd.to_numeric(displacement["year"], errors="coerce")
 displacement["month_num"] = pd.to_numeric(displacement["month_num"], errors="coerce")
 displacement["displaced_in"] = pd.to_numeric(displacement["displaced_in"], errors="coerce").fillna(0)
-
-if "displaced_from" in displacement.columns:
-    displacement["displaced_from"] = pd.to_numeric(displacement["displaced_from"], errors="coerce").fillna(0)
-else:
-    displacement["displaced_from"] = 0
-
 displacement = ensure_displacement_metadata(displacement)
 displacement = apply_lebanon_displacement_fallback(displacement, value_col="displaced_in")
 
@@ -327,7 +330,6 @@ displacement = displacement[
         "year",
         "month_num",
         "displaced_in",
-        "displaced_from",
         DISPLACEMENT_ADJUSTED_FLAG_COL,
         DISPLACEMENT_SOURCE_NOTE_COL,
     ]
@@ -339,7 +341,6 @@ displacement = (
     displacement.groupby(["country", "admin1_norm", "year", "month_num"], as_index=False)
     .agg({
         "displaced_in": "sum",
-        "displaced_from": "sum",
         DISPLACEMENT_ADJUSTED_FLAG_COL: "max",
         DISPLACEMENT_SOURCE_NOTE_COL: combine_unique_text,
     })
@@ -353,7 +354,6 @@ country_displacement_monthly = (
     .agg({
         "displaced": "sum",
         "displaced_in": "sum",
-        "displaced_from": "sum",
         DISPLACEMENT_ADJUSTED_FLAG_COL: "max",
         DISPLACEMENT_SOURCE_NOTE_COL: combine_unique_text,
     })
@@ -369,7 +369,6 @@ admin1_monthly = admin1_monthly.merge(
 )
 
 admin1_monthly["displaced_in"] = admin1_monthly["displaced_in"].fillna(0)
-admin1_monthly["displaced_from"] = admin1_monthly["displaced_from"].fillna(0)
 admin1_monthly["displaced"] = admin1_monthly["displaced"].fillna(0)
 admin1_monthly = ensure_displacement_metadata(admin1_monthly)
 
@@ -490,7 +489,6 @@ admin1_monthly = admin1_monthly[
         "population_exposure",
         "displaced",
         "displaced_in",
-        "displaced_from",
         DISPLACEMENT_ADJUSTED_FLAG_COL,
         DISPLACEMENT_SOURCE_NOTE_COL,
         "centroid_latitude",
@@ -538,7 +536,6 @@ country_monthly = country_monthly.merge(
 
 country_monthly["displaced"] = country_monthly["displaced"].fillna(0)
 country_monthly["displaced_in"] = country_monthly["displaced_in"].fillna(0)
-country_monthly["displaced_from"] = country_monthly["displaced_from"].fillna(0)
 country_monthly = ensure_displacement_metadata(country_monthly)
 
 country_monthly["events_log"] = np.log1p(country_monthly["events"])
@@ -618,7 +615,6 @@ country_monthly = country_monthly[
         "population_exposure",
         "displaced",
         "displaced_in",
-        "displaced_from",
         DISPLACEMENT_ADJUSTED_FLAG_COL,
         DISPLACEMENT_SOURCE_NOTE_COL,
         "events_log",
@@ -679,7 +675,6 @@ print(
             "month_num",
             "displaced",
             "displaced_in",
-            "displaced_from",
             DISPLACEMENT_ADJUSTED_FLAG_COL,
         ]
     ].head(20)

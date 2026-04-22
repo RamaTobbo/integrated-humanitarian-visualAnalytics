@@ -28,34 +28,50 @@ output_admin1 = output_dir / "admin1_monthlybytype_with_centroids.csv"
 MIN_YEAR = 2024
 MAX_YEAR = 2026
 
-# Fix names that pycountry may not resolve directly
+# Fix names that pycountry may not resolve directly.
+# Keys are names as they appear in source files; values are names pycountry recognises.
 COUNTRY_FIXES = {
-    "United States of America": "United States",
-    "Russian Federation": "Russia",
-    "Türkiye": "Turkey",
-    "Czech Republic": "Czechia",
-    "Syrian Arab Republic": "Syria",
-    "Iran (Islamic Republic of)": "Iran",
-    "Venezuela (Bolivarian Republic of)": "Venezuela",
-    "Bolivia (Plurinational State of)": "Bolivia",
-    "United Republic of Tanzania": "Tanzania",
-    "Republic of Moldova": "Moldova",
-    "Lao People's Democratic Republic": "Laos",
-    "State of Palestine": "Palestine",
-    "Democratic Republic of Congo": "Congo, The Democratic Republic of the",
-    "DR Congo": "Congo, The Democratic Republic of the",
-    "Congo, Dem. Rep.": "Congo, The Democratic Republic of the",
-    "Congo, Rep.": "Congo",
-    "Republic of the Congo": "Congo",
-    "Myanmar (Burma)": "Myanmar",
-    "North Macedonia": "North Macedonia",
-    "Kosovo": "Kosovo",  # may remain unresolved in pycountry
+    # Historical ACLED alternate names
+    "United States of America":             "United States",
+    "Russian Federation":                   "Russian Federation",
+    "Türkiye":                              "Türkiye",
+    "Czech Republic":                       "Czechia",
+    "Syrian Arab Republic":                 "Syria",
+    "Iran (Islamic Republic of)":           "Iran",
+    "Venezuela (Bolivarian Republic of)":   "Venezuela",
+    "Bolivia (Plurinational State of)":     "Bolivia",
+    "United Republic of Tanzania":          "Tanzania",
+    "Republic of Moldova":                  "Moldova",
+    "Lao People's Democratic Republic":     "Laos",
+    "State of Palestine":                   "Palestine",
+    "Democratic Republic of Congo":         "Congo, The Democratic Republic of the",
+    "DR Congo":                             "Congo, The Democratic Republic of the",
+    "Congo, Dem. Rep.":                     "Congo, The Democratic Republic of the",
+    "Congo, Rep.":                          "Congo",
+    "Republic of the Congo":               "Congo",
+    "Myanmar (Burma)":                      "Myanmar",
+    # Regional 2026 file names that pycountry cannot resolve as-is
+    "Russia":                               "Russian Federation",
+    "Turkey":                               "Türkiye",
+    "Ivory Coast":                          "Côte d'Ivoire",
+    "Republic of Congo":                    "Congo",
+    "Cape Verde":                           "Cabo Verde",
+    "Reunion":                              "Réunion",
+    "Bailiwick of Guernsey":               "Guernsey",
+    "Bailiwick of Jersey":                  "Jersey",
+    "Caribbean Netherlands":               "Bonaire, Sint Eustatius and Saba",
+    "Curacao":                              "Curaçao",
+    "Falkland Islands":                     "Falkland Islands (Malvinas)",
+    "Saint-Barthelemy":                     "Saint Barthélemy",
+    "Saint-Martin":                         "Saint Martin (French Part)",
+    "Sint Maarten":                         "Sint Maarten (Dutch part)",
 }
 
 # manual fallback for names pycountry may not resolve
 COUNTRY_TO_ISO_NUMERIC_FALLBACK = {
-    "Kosovo": 383,
-    "Palestine": 275,
+    "Kosovo":       383,
+    "Palestine":    275,
+    "Vatican City": 336,
 }
 
 # ==================================================
@@ -297,12 +313,19 @@ reg = reg.drop_duplicates().reset_index(drop=True)
 
 # ==================================================
 # 3) COUNTRY MONTHLY OUTPUT
-# historical 2024-2025 + regional 2026
+# historical ACLED: 2024-Jun through 2025-Apr
+# regional files fill May-Dec 2025 and all of 2026
 # ==================================================
-reg_2026 = reg[reg["year"] == 2026].copy()
 
-reg_country_by_type_2026 = (
-    reg_2026.groupby(
+# Use regional files for months NOT covered by historical ACLED
+# (ACLED ends Apr 2025; regional files fill May 2025 onward)
+reg_extension = reg[
+    (reg["year"] == 2026) |
+    ((reg["year"] == 2025) & (reg["month_num"] >= 5))
+].copy()
+
+reg_country_by_type_ext = (
+    reg_extension.groupby(
         ["iso3", "country", "year", "month_num", "month", "event_type"],
         as_index=False
     )
@@ -313,8 +336,8 @@ reg_country_by_type_2026 = (
     )
 )
 
-reg_country_all_2026 = (
-    reg_2026.groupby(
+reg_country_all_ext = (
+    reg_extension.groupby(
         ["iso3", "country", "year", "month_num", "month"],
         as_index=False
     )
@@ -325,10 +348,10 @@ reg_country_all_2026 = (
     )
 )
 
-reg_country_all_2026["event_type"] = "All"
-reg_country_monthly_2026 = pd.concat([reg_country_all_2026, reg_country_by_type_2026], ignore_index=True)
+reg_country_all_ext["event_type"] = "All"
+reg_country_monthly_ext = pd.concat([reg_country_all_ext, reg_country_by_type_ext], ignore_index=True)
 
-country_monthly = pd.concat([hist_country_monthly, reg_country_monthly_2026], ignore_index=True)
+country_monthly = pd.concat([hist_country_monthly, reg_country_monthly_ext], ignore_index=True)
 
 # keep only 2024-2026
 country_monthly = country_monthly[country_monthly["year"].between(MIN_YEAR, MAX_YEAR)].copy()
@@ -377,6 +400,22 @@ admin1_monthly = pd.concat([admin1_all, admin1_by_type], ignore_index=True)
 # ==================================================
 main = hist_main.copy()
 main = main[main["year"].between(MIN_YEAR, MAX_YEAR)].copy()
+
+# ==================================================
+# 5b) NORMALISE COUNTRY NAMES
+# Prefer the ACLED historical name (2024-Apr 2025) when the same iso3 has
+# multiple spellings across sources (e.g. "Russia" vs "Russian Federation").
+# ==================================================
+_preferred_name = (
+    hist_country_monthly.groupby("iso3")["country"].first().rename("preferred_country")
+)
+country_monthly = country_monthly.merge(_preferred_name, on="iso3", how="left")
+country_monthly["country"] = country_monthly["preferred_country"].fillna(country_monthly["country"])
+country_monthly = country_monthly.drop(columns=["preferred_country"])
+
+admin1_monthly = admin1_monthly.merge(_preferred_name, on="iso3", how="left")
+admin1_monthly["country"] = admin1_monthly["preferred_country"].fillna(admin1_monthly["country"])
+admin1_monthly = admin1_monthly.drop(columns=["preferred_country"])
 
 # ==================================================
 # 6) SORT

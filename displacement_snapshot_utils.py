@@ -259,3 +259,33 @@ def describe_displacement_aggregation(mode="latest", period=None):
         if period_label:
             return f"{label} ({period_label})"
     return label
+
+
+def resolve_displacement_period(in_frame, out_frame=None, priority_frame=None):
+    """
+    Determine a single consistent displacement snapshot period.
+
+    Resolution order:
+    1. Latest displacement period, because displacement is the primary stock metric
+    2. Latest priority period, when no displacement stock exists
+
+    Returns
+    -------
+    period : dict | None
+        {"year": int, "month_num": int, "month": str} or None if no data.
+    source_note : str
+        One of "displacement_only", "priority_only", "no_data".
+    period_mismatch : bool
+        Always False; kept for backward-compatible call sites.
+    """
+    in_latest = get_latest_period(in_frame) if in_frame is not None and not in_frame.empty else None
+
+    if in_latest:
+        return in_latest, "displacement_only", False
+
+    if priority_frame is not None and not priority_frame.empty:
+        pri_latest = get_latest_period(priority_frame)
+        if pri_latest:
+            return pri_latest, "priority_only", False
+
+    return None, "no_data", False

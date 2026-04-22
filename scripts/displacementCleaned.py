@@ -14,10 +14,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 input_path = BASE_DIR / "data" / "raw" / "global" / "global-iom-dtm-from-api-admin-0-to-2.csv"
 output_dir = BASE_DIR / "data" / "cleaned" / "global"
 output_dir.mkdir(parents=True, exist_ok=True)
+unified_output_dir = BASE_DIR / "data" / "cleaned" / "displacement"
+unified_output_dir.mkdir(parents=True, exist_ok=True)
 
 cleaned_output_path = output_dir / "displacement_cleaned_2024_2026.csv"
 dest_output_path = output_dir / "displacement_admin1_destination_monthly_2024_2026.csv"
-origin_output_path = output_dir / "displacement_admin1_origin_monthly_2024_2026.csv"
+unified_output_path = unified_output_dir / "displacement_unified_allcountries_2024_2026.csv"
 
 
 def normalize_text(value):
@@ -73,10 +75,12 @@ for col in ["admin0Name", "admin1Name", "admin2Name", "idpOriginAdmin1Name", "di
 df["numPresentIdpInd"] = pd.to_numeric(df["numPresentIdpInd"], errors="coerce").fillna(0)
 df["yearReportingDate"] = pd.to_numeric(df["yearReportingDate"], errors="coerce")
 df["monthReportingDate"] = pd.to_numeric(df["monthReportingDate"], errors="coerce")
+df["reportingDate"] = pd.to_datetime(df["reportingDate"], errors="coerce")
 
 df = df[
     df["yearReportingDate"].notna()
     & df["monthReportingDate"].notna()
+    & df["reportingDate"].notna()
     & df["admin0Name"].notna()
     & df["admin1Name"].notna()
 ].copy()
@@ -91,22 +95,39 @@ bad_values = {"", "nan", "none", "not available", "unknown"}
 
 df["country"] = df["admin0Name"].apply(normalize_text)
 df["admin1_dest_norm"] = df["admin1Name"].apply(normalize_text)
-df["admin1_origin_norm"] = df["idpOriginAdmin1Name"].apply(normalize_text)
+df["admin2_dest_norm"] = df["admin2Name"].apply(normalize_text)
 
 df.loc[df["country"].isin(bad_values), "country"] = None
 df.loc[df["admin1_dest_norm"].isin(bad_values), "admin1_dest_norm"] = None
-df.loc[df["admin1_origin_norm"].isin(bad_values), "admin1_origin_norm"] = None
+df.loc[df["admin2_dest_norm"].isin(bad_values), "admin2_dest_norm"] = None
 
 df["month"] = df["monthReportingDate"].apply(month_num_to_name)
 
-# save cleaned row-level file
-df.to_csv(cleaned_output_path, index=False)
+snapshot_keys = ["country", "yearReportingDate", "monthReportingDate"]
+latest_reporting_date = df.groupby(snapshot_keys)["reportingDate"].transform("max")
+snapshot_df = df[df["reportingDate"].eq(latest_reporting_date)].copy()
+
+# Keep one source level per country/month/admin1. If admin2 rows exist for an
+# admin1 in the latest report, roll those up to admin1; otherwise use admin1 rows.
+snapshot_df["dest_detail_level"] = 0
+snapshot_df.loc[snapshot_df["admin1_dest_norm"].notna(), "dest_detail_level"] = 1
+snapshot_df.loc[snapshot_df["admin2_dest_norm"].notna(), "dest_detail_level"] = 2
+
+admin1_snapshot_keys = [*snapshot_keys, "admin1_dest_norm"]
+max_detail_level = snapshot_df.groupby(admin1_snapshot_keys)["dest_detail_level"].transform("max")
+snapshot_df = snapshot_df[
+    snapshot_df["dest_detail_level"].eq(max_detail_level) &
+    snapshot_df["dest_detail_level"].gt(0)
+].copy()
+
+# save cleaned snapshot row-level file
+snapshot_df.to_csv(cleaned_output_path, index=False)
 
 # =========================================================
 # DESTINATION MONTHLY ADMIN1
 # =========================================================
 dest = (
-    df.dropna(subset=["country", "admin1_dest_norm", "month"])
+    snapshot_df.dropna(subset=["country", "admin1_dest_norm", "month"])
     .groupby(
         ["country", "admin0Name", "yearReportingDate", "monthReportingDate", "month", "admin1_dest_norm"],
         as_index=False
@@ -125,34 +146,16 @@ dest = ensure_displacement_metadata(dest)
 dest = apply_lebanon_displacement_fallback(dest, value_col="displaced_in")
 dest.to_csv(dest_output_path, index=False)
 
-# =========================================================
-# ORIGIN MONTHLY ADMIN1
-# =========================================================
-origin = (
-    df.dropna(subset=["country", "admin1_origin_norm", "month"])
-    .groupby(
-        ["country", "admin0Name", "yearReportingDate", "monthReportingDate", "month", "admin1_origin_norm"],
-        as_index=False
-    )["numPresentIdpInd"]
-    .sum()
-    .rename(columns={
-        "admin0Name": "country_name",
-        "yearReportingDate": "year",
-        "monthReportingDate": "month_num",
-        "admin1_origin_norm": "admin1_norm",
-        "numPresentIdpInd": "displaced_from",
-    })
-)
-
-origin = ensure_displacement_metadata(origin)
-origin.to_csv(origin_output_path, index=False)
+unified = dest[["country", "year", "month_num", "month", "admin1_norm", "displaced_in"]].copy()
+unified["displaced_in"] = pd.to_numeric(unified["displaced_in"], errors="coerce").fillna(0)
+unified = unified.sort_values(["country", "year", "month_num", "admin1_norm"]).reset_index(drop=True)
+unified.to_csv(unified_output_path, index=False)
 
 print("Saved cleaned rows to:", cleaned_output_path)
 print("Saved destination monthly admin1 to:", dest_output_path)
-print("Saved origin monthly admin1 to:", origin_output_path)
-print("Cleaned rows:", len(df))
+print("Saved unified displacement file to:", unified_output_path)
+print("Cleaned snapshot rows:", len(snapshot_df))
 print("Destination rows:", len(dest))
-print("Origin rows:", len(origin))
 
 summary = summarize_country_months(dest, country="lebanon", value_col="displaced_in")
 print("\nLebanon February and March 2026 destination totals:")
