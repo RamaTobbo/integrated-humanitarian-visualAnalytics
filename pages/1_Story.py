@@ -3632,19 +3632,55 @@ def build_country_admin2_conflict_view(country_admin2_boundary, selected_country
         )
         merged = boundary.merge(metric_source, on="admin2_norm", how="left")
         merged = ensure_numeric_columns(merged, ["events", "fatalities", "population_exposure"])
+        parent_rows = admin_conflict[
+            (admin_conflict["country_norm"] == "lebanon") &
+            (admin_conflict["admin1_norm"] == admin1_norm) &
+            (admin_conflict["year"] == int(selected_year)) &
+            (admin_conflict["month_num"] == int(month_num)) &
+            (admin_conflict["event_type"].astype(str).str.strip().str.lower() == _sel_et.lower())
+        ].copy()
+        if parent_rows.empty:
+            parent_rows = admin_conflict[
+                (admin_conflict["country_norm"] == "lebanon") &
+                (admin_conflict["admin1_norm"] == admin1_norm) &
+                (admin_conflict["year"] == int(selected_year)) &
+                (admin_conflict["month_num"] == int(month_num)) &
+                (admin_conflict["event_type"].astype(str).str.strip().str.lower() == "all")
+            ].copy()
+        parent_values = {
+            metric: float(pd.to_numeric(parent_rows[metric], errors="coerce").fillna(0).sum())
+            if metric in parent_rows.columns else 0.0
+            for metric in ["events", "fatalities", "population_exposure"]
+        }
+        merged, parent_reconciled = hierarchy.reconcile_children_to_parent(
+            merged,
+            parent_values,
+            ["events", "fatalities", "population_exposure"],
+            source_col="acled_data_note",
+        )
         merged["has_acled_data"] = (
             (merged["events"] > 0) |
             (merged["fatalities"] > 0) |
             (merged["population_exposure"] > 0)
         )
-        merged["acled_match_status"] = merged["has_acled_data"].map(
-            {True: "Matched admin2 conflict data", False: "No matched events"}
-        )
-        merged["acled_data_note"] = merged["has_acled_data"].map(
-            {True: "Matched admin2 conflict data", False: "No matched events"}
-        )
+        if parent_reconciled:
+            merged["has_acled_data"] = False
+            merged["acled_match_status"] = "Estimated from governorate total"
+            merged["acled_data_note"] = "Estimated from governorate total"
+        else:
+            merged["acled_match_status"] = merged["has_acled_data"].map(
+                {True: "Matched admin2 conflict data", False: "No matched events"}
+            )
+            merged["acled_data_note"] = merged["has_acled_data"].map(
+                {True: "Matched admin2 conflict data", False: "No matched events"}
+            )
         merged["has_acled_data_label"] = merged["has_acled_data"].map({True: "Yes", False: "No"})
-        return merged, False, None
+        estimate_note = (
+            f"Estimated district breakdown for {selected_month} {selected_year} from the "
+            f"{admin1_norm.replace('-', ' ').title()} governorate total."
+            if parent_reconciled else None
+        )
+        return merged, bool(parent_reconciled), estimate_note
 
     boundary = country_admin2_boundary[country_admin2_boundary["admin1_norm"] == admin1_norm].copy()
     if boundary.empty:
@@ -3755,6 +3791,39 @@ def build_country_admin2_conflict_view(country_admin2_boundary, selected_country
     )
     merged = boundary.merge(metric_source, on="admin2_norm", how="left")
     merged = ensure_numeric_columns(merged, ["events", "fatalities", "population_exposure"])
+    parent_rows = admin_conflict[
+        (admin_conflict["country_norm"] == country_norm) &
+        (admin_conflict["admin1_norm"] == admin1_norm) &
+        (admin_conflict["year"] == int(selected_year)) &
+        (admin_conflict["month_num"] == int(month_num)) &
+        (admin_conflict["event_type"].astype(str).str.strip().str.lower() == event_type_norm)
+    ].copy()
+    if parent_rows.empty:
+        parent_rows = admin_conflict[
+            (admin_conflict["country_norm"] == country_norm) &
+            (admin_conflict["admin1_norm"] == admin1_norm) &
+            (admin_conflict["year"] == int(selected_year)) &
+            (admin_conflict["month_num"] == int(month_num)) &
+            (admin_conflict["event_type"].astype(str).str.strip().str.lower() == "all")
+        ].copy()
+    parent_values = {
+        metric: float(pd.to_numeric(parent_rows[metric], errors="coerce").fillna(0).sum())
+        if metric in parent_rows.columns else 0.0
+        for metric in ["events", "fatalities", "population_exposure"]
+    }
+    merged, parent_reconciled = hierarchy.reconcile_children_to_parent(
+        merged,
+        parent_values,
+        ["events", "fatalities", "population_exposure"],
+        source_col="acled_data_note",
+    )
+    if parent_reconciled:
+        estimated = True
+        if not estimate_note:
+            estimate_note = (
+                f"Estimated district breakdown for {selected_month} {selected_year} from the "
+                f"{admin1_norm.replace('-', ' ').title()} admin1 total."
+            )
 
     if estimated:
         merged["has_acled_data"] = False
@@ -6229,8 +6298,13 @@ else:
                 merged[col] = 0
             merged[col] = pd.to_numeric(merged[col], errors="coerce").fillna(0)
         merged["displaced"] = merged["displaced"].where(merged["displaced"] > 0, merged["displaced_in"])
+        priority_fallback = _fallback_priority_score(merged)
+        for score_col in ["priority_score_country", "priority_score_global"]:
+            score_values = pd.to_numeric(merged[score_col], errors="coerce").fillna(0.0)
+            missing_score = score_values <= 0
+            merged[score_col] = score_values.where(~missing_score, priority_fallback)
 
-        total_priority = float(hierarchy.numeric_series(priority_slice, "priority_score_country").sum())
+        total_priority = float(merged["priority_score_country"].sum())
         total_disp = float(merged["displaced"].sum())
         total_ev = int(hierarchy.numeric_series(priority_slice, "events").sum())
 
@@ -6389,11 +6463,6 @@ else:
                     color_continuous_scale=_detail_scale,
                     hover_name="admin2_label",
                     hover_data={
-                        "has_acled_data_label": True,
-                        "acled_data_note": True,
-                        "acled_match_status": True,
-                        "district_value_source": True,
-                        "displacement_data_note": True,
                         "priority_score": ":.3f",
                         "priority_rank": True,
                         "events": True,
