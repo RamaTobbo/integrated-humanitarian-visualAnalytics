@@ -4494,11 +4494,34 @@ LIGHT_LAYOUT = dict(
     margin=dict(l=0, r=0, t=50, b=0),
 )
 
-SCALE_BLUE  = [[0,"#f4f7fb"],[0.25,"#d2dceb"],[0.5,"#8fa7c9"],[0.75,"#4f6c95"],[1,"#2c4a6e"]]
-SCALE_BUBBLE = [[0,"#dce8f4"],[0.25,"#b7cbe1"],[0.5,"#84a4c3"],[0.75,"#4e7098"],[1,"#1a2e48"]]
-SCALE_WARM  = [[0,"#fbf6f0"],[0.25,"#f2e0cc"],[0.5,"#dcb48a"],[0.75,"#b8703a"],[1,"#7a4418"]]
-SCALE_TEAL  = [[0,"#f1f7f5"],[0.25,"#d0e3dd"],[0.5,"#95bcb0"],[0.75,"#5a8a82"],[1,"#2e5652"]]
-SCALE_GOLD  = [[0,"#faf5ea"],[0.25,"#ecd9ad"],[0.5,"#c8a26a"],[0.75,"#a8864a"],[1,"#6e5727"]]
+SCALE_BLUE = [[0, "#f8fbff"], [0.15, "#dbeafe"], [0.35, "#93c5fd"], [0.6, "#3b82f6"], [0.8, "#1d4ed8"], [1, "#172554"]]
+SCALE_PRIORITY = [[0, "#fff7ed"], [0.18, "#fed7aa"], [0.42, "#fb923c"], [0.66, "#e11d48"], [0.84, "#9f1239"], [1, "#4c0519"]]
+SCALE_BUBBLE = [[0, "#eef6ff"], [0.2, "#bfdbfe"], [0.45, "#60a5fa"], [0.7, "#2563eb"], [1, "#0f172a"]]
+SCALE_WARM = [[0, "#fff7ed"], [0.18, "#fed7aa"], [0.42, "#fb923c"], [0.68, "#dc2626"], [1, "#7f1d1d"]]
+SCALE_TEAL = [[0, "#ecfdf5"], [0.18, "#a7f3d0"], [0.42, "#34d399"], [0.68, "#059669"], [1, "#064e3b"]]
+SCALE_GOLD = [[0, "#fffbeb"], [0.18, "#fde68a"], [0.42, "#f59e0b"], [0.68, "#b45309"], [1, "#78350f"]]
+
+PRIORITY_COLOR_METRICS = {
+    "country_priority_score",
+    "country_priority_score_base",
+    "priority_score",
+    "priority_score_country",
+    "priority_score_global",
+    "health_priority_score",
+    "education_priority_score",
+}
+
+def map_scale_for_metric(metric):
+    metric = str(metric or "")
+    if metric in PRIORITY_COLOR_METRICS:
+        return SCALE_PRIORITY
+    if metric == "fatalities":
+        return SCALE_WARM
+    if metric in {"displaced", "displaced_in"}:
+        return SCALE_TEAL
+    if metric == "population_exposure":
+        return SCALE_GOLD
+    return SCALE_BLUE
 
 # ──────────────────────────────────────────────────
 # DATA LOADERS
@@ -5083,7 +5106,7 @@ def build_country_admin2_conflict_view(country_admin2_boundary, selected_country
             (admin_conflict["month_num"] == int(month_num)) &
             (admin_conflict["event_type"].astype(str).str.strip().str.lower() == _sel_et.lower())
         ].copy()
-        if parent_rows.empty:
+        if parent_rows.empty and _sel_et.lower() == "all":
             parent_rows = admin_conflict[
                 (admin_conflict["country_norm"] == "lebanon") &
                 (admin_conflict["admin1_norm"] == admin1_norm) &
@@ -5220,7 +5243,7 @@ def build_country_admin2_conflict_view(country_admin2_boundary, selected_country
             (admin_conflict["month_num"] == int(month_num)) &
             (admin_conflict["event_type"].astype(str).str.strip().str.lower() == event_type_norm)
         ].copy()
-        if total_rows.empty:
+        if total_rows.empty and event_type_norm == "all":
             total_rows = admin_conflict[
                 (admin_conflict["country_norm"] == country_norm) &
                 (admin_conflict["admin1_norm"] == admin1_norm) &
@@ -5329,7 +5352,7 @@ def build_country_admin2_conflict_view(country_admin2_boundary, selected_country
         (admin_conflict["month_num"] == int(month_num)) &
         (admin_conflict["event_type"].astype(str).str.strip().str.lower() == event_type_norm)
     ].copy()
-    if parent_rows.empty:
+    if parent_rows.empty and event_type_norm == "all":
         parent_rows = admin_conflict[
             (admin_conflict["country_norm"] == country_norm) &
             (admin_conflict["admin1_norm"] == admin1_norm) &
@@ -5646,7 +5669,7 @@ def render_lebanon_admin2_drilldown(
                 f"Showing the districts inside {selected_admin1_label}."
             )
 
-        cscale = SCALE_BLUE if detail_metric == "events" else SCALE_WARM if detail_metric == "fatalities" else SCALE_GOLD
+        cscale = map_scale_for_metric(detail_metric)
         fig = px.choropleth_mapbox(
             merged,
             geojson=json.loads(merged.to_json()),
@@ -5703,12 +5726,7 @@ def render_lebanon_admin2_drilldown(
             f"Showing the districts inside {selected_admin1_label}."
         )
 
-    if detail_metric == "priority_score":
-        cscale = SCALE_BLUE
-    elif detail_metric == "fatalities":
-        cscale = SCALE_WARM
-    else:
-        cscale = SCALE_TEAL
+    cscale = map_scale_for_metric(detail_metric)
 
     fig = px.choropleth_mapbox(
         merged,
@@ -7002,7 +7020,7 @@ if st.session_state["view"] == "world":
         </div>
         """, unsafe_allow_html=True)
 
-        cscale = SCALE_BLUE if metric == "events" else SCALE_WARM
+        cscale = map_scale_for_metric(metric)
 
         if selected_country == "All":
             fig = px.choropleth_mapbox(
@@ -7192,7 +7210,7 @@ if st.session_state["view"] == "world":
         </div>
         """, unsafe_allow_html=True)
 
-        cscale = SCALE_BLUE if is_score_metric(metric) else SCALE_WARM if metric == "fatalities" else SCALE_TEAL if metric == "displaced" else SCALE_GOLD if metric == "population_exposure" else SCALE_BLUE
+        cscale = map_scale_for_metric(metric)
         world_priority_hover_data = {
             "country": True,
             "events": True,
@@ -7641,7 +7659,7 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        cscale = SCALE_BLUE if selected_metric == "events" else SCALE_WARM if selected_metric == "fatalities" else SCALE_GOLD
+        cscale = map_scale_for_metric(selected_metric)
         merged["_hover_html"] = build_nonzero_hover_text(
             merged,
             [
@@ -7703,19 +7721,13 @@ else:
                 else:
                     _admin2_gdf["district_estimation_note"] = _admin2_gdf["district_estimation_note"].fillna("")
                 _detail_metric = selected_metric if selected_metric in {"events", "fatalities", "population_exposure"} else "events"
-                _detail_scale = SCALE_BLUE if _detail_metric == "events" else SCALE_WARM if _detail_metric == "fatalities" else SCALE_GOLD
+                _detail_scale = map_scale_for_metric(_detail_metric)
                 _admin2_gdf["_hover_html"] = build_nonzero_hover_text(
                     _admin2_gdf,
                     [
                         ("events", "Events", "count"),
                         ("fatalities", "Fatalities", "count"),
                         ("population_exposure", "Population exposure", "count"),
-                    ],
-                    [
-                        ("has_acled_data_label", "ACLED district data"),
-                        ("acled_data_note", "District data note"),
-                        ("acled_match_status", "Match method"),
-                        ("district_estimation_note", "Estimate note"),
                     ],
                 )
                 _fig2 = px.choropleth_mapbox(
@@ -7935,16 +7947,16 @@ else:
         render_country_need_detail(selected_country_name, selected_country_priority_row)
 
         if selected_metric in ["priority_score_country", "priority_score_global", "health_priority_score", "education_priority_score"]:
-            cscale = SCALE_BLUE
+            cscale = map_scale_for_metric(selected_metric)
             fmt_fn = lambda v: f"{v:.3f}"
         elif selected_metric == "fatalities":
-            cscale = SCALE_WARM
+            cscale = map_scale_for_metric(selected_metric)
             fmt_fn = fmt_big
         elif selected_metric == "population_exposure":
-            cscale = SCALE_GOLD
+            cscale = map_scale_for_metric(selected_metric)
             fmt_fn = fmt_big
         else:
-            cscale = SCALE_TEAL
+            cscale = map_scale_for_metric(selected_metric)
             fmt_fn = fmt_big
 
         priority_hover_metrics = [
@@ -8013,12 +8025,12 @@ else:
                     st.warning(f"No admin2 boundary data found for {_admin1_display}.")
                 if selected_metric == "priority_score_global" and "priority_score_global" in _admin2_gdf.columns:
                     _detail_metric = "priority_score_global"
-                    _detail_scale = SCALE_BLUE
+                    _detail_scale = map_scale_for_metric(_detail_metric)
                     _detail_fmt = lambda v: f"{v:.3f}"
                     _detail_label = "Priority Score (Global)"
                 elif selected_metric in {"priority_score_country", "priority_score_global"}:
                     _detail_metric = "priority_score"
-                    _detail_scale = SCALE_BLUE
+                    _detail_scale = map_scale_for_metric(_detail_metric)
                     _detail_fmt = lambda v: f"{v:.3f}"
                     _detail_label = "Priority Score"
                 elif selected_metric in {"health_priority_score", "education_priority_score"}:
@@ -8028,27 +8040,27 @@ else:
                         float(pd.to_numeric(_admin2_gdf[selected_metric], errors="coerce").fillna(0).sum()) > 0
                         else "priority_score"
                     )
-                    _detail_scale = SCALE_BLUE
+                    _detail_scale = map_scale_for_metric(_detail_metric)
                     _detail_fmt = lambda v: f"{v:.3f}"
                     _detail_label = metric_label(selected_metric)
                 elif selected_metric == "fatalities":
                     _detail_metric = "fatalities"
-                    _detail_scale = SCALE_WARM
+                    _detail_scale = map_scale_for_metric(_detail_metric)
                     _detail_fmt = fmt_big
                     _detail_label = "Fatalities"
                 elif selected_metric == "population_exposure":
                     _detail_metric = "population_exposure"
-                    _detail_scale = SCALE_GOLD
+                    _detail_scale = map_scale_for_metric(_detail_metric)
                     _detail_fmt = fmt_big
                     _detail_label = "Pop. Exposure"
                 elif selected_metric == "displaced" and "displaced_in" in _admin2_gdf.columns:
                     _detail_metric = "displaced_in"
-                    _detail_scale = SCALE_TEAL
+                    _detail_scale = map_scale_for_metric(_detail_metric)
                     _detail_fmt = fmt_big
                     _detail_label = "Displacement Snapshot"
                 else:
                     _detail_metric = "priority_score" if selected_metric == "displaced" else "events"
-                    _detail_scale = SCALE_BLUE if _detail_metric == "priority_score" else SCALE_TEAL
+                    _detail_scale = map_scale_for_metric(_detail_metric)
                     _detail_fmt = (lambda v: f"{v:.3f}") if _detail_metric == "priority_score" else fmt_big
                     _detail_label = "Priority Score" if _detail_metric == "priority_score" else "Events"
                 _admin2_gdf = ensure_numeric_columns(
@@ -8084,17 +8096,14 @@ else:
                     ("fatalities", "Fatalities", "count"),
                     ("population_exposure", "Population exposure", "count"),
                 ]
-                _admin2_hover_notes = [("district_estimation_note", "Estimate note")]
                 if selected_metric == "displaced" or _detail_metric == "displaced_in":
                     _admin2_hover_metrics.extend([
                         ("displaced", "Displaced", "count"),
                         ("displaced_in", "Displaced in", "count"),
                     ])
-                    _admin2_hover_notes.append(("displacement_data_note", "Displacement note"))
                 _admin2_gdf["_hover_html"] = build_nonzero_hover_text(
                     _admin2_gdf,
                     _admin2_hover_metrics,
-                    _admin2_hover_notes,
                 )
                 _fig2 = px.choropleth_mapbox(
                     _admin2_gdf,
