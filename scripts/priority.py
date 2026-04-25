@@ -32,7 +32,9 @@ acled_files = [
     Path("data/raw/global/regions_2026/US-and-Canada_aggregated_data_up_to_week_of-2026-03-28.xlsx"),
 ]
 
-displacement_dest_path = Path("data/cleaned/global/displacement_admin1_destination_monthly_2024_2026.csv")
+displacement_dest_override_path = Path("data/cleaned/global/displacement_admin1_destination_monthly_2024_2026_override.csv")
+displacement_dest_default_path = Path("data/cleaned/global/displacement_admin1_destination_monthly_2024_2026.csv")
+displacement_dest_path = displacement_dest_override_path if displacement_dest_override_path.exists() else displacement_dest_default_path
 
 output_dir = Path("data/cleaned/global")
 output_dir.mkdir(parents=True, exist_ok=True)

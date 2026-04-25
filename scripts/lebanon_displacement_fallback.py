@@ -12,10 +12,21 @@ LEBANON_COUNTRY_FALLBACK_RULES = [
         "month_num": 2,
         "target_total": 970_443,
         "apply_below_ratio": 0.999,
+        "admin1_shares": {
+            "al nabatieh": 0.32,
+            "south": 0.31,
+            "bekaa": 0.12,
+            "baalbek-hermel": 0.10,
+            "beirut": 0.09,
+            "mount lebanon": 0.04,
+            "north": 0.01,
+            "akkar": 0.01,
+        },
         "note": (
-            "Adjusted fallback using Lebanon's latest observed admin1 displacement "
-            "distribution carried forward because February 2026 is missing in the "
-            "source dataset."
+            "Adjusted fallback using a Lebanon admin1 displacement profile that "
+            "prioritizes the main conflict-origin and reception pressure areas in "
+            "South, Al Nabatieh, Bekaa, Baalbek-Hermel, and Beirut because "
+            "February 2026 is missing in the source dataset."
         ),
     },
     {
@@ -23,11 +34,22 @@ LEBANON_COUNTRY_FALLBACK_RULES = [
         "month_num": 3,
         "target_total": 1_200_000,
         "apply_below_ratio": 0.90,
+        "admin1_shares": {
+            "al nabatieh": 0.32,
+            "south": 0.31,
+            "bekaa": 0.12,
+            "baalbek-hermel": 0.10,
+            "beirut": 0.09,
+            "mount lebanon": 0.04,
+            "north": 0.01,
+            "akkar": 0.01,
+        },
         "note": (
             "Adjusted fallback using a Lebanon March 2026 country estimate of about "
-            "1.2 million, distributed across admin1 using the latest available "
-            "Lebanon admin1 shares because the source dataset is missing or "
-            "undercounting that month."
+            "1.2 million, distributed across admin1 using an explicit Lebanon 2026 "
+            "profile that emphasizes South, Al Nabatieh, Bekaa, Baalbek-Hermel, "
+            "and Beirut over Mount Lebanon because the source dataset is missing "
+            "or undercounting that month."
         ),
     },
 ]
@@ -171,6 +193,28 @@ def _latest_positive_share_frame(df, value_col, year, month_num):
     return basis_rows[["admin1_norm", "share"]], basis_period
 
 
+def _share_frame_from_rule(rule):
+    admin1_shares = rule.get("admin1_shares") or {}
+    if not admin1_shares:
+        return pd.DataFrame(columns=["admin1_norm", "share"]), None
+
+    share_frame = (
+        pd.Series(admin1_shares, dtype="float64")
+        .rename_axis("admin1_norm")
+        .reset_index(name="share")
+    )
+    share_frame["admin1_norm"] = share_frame["admin1_norm"].astype(str).str.strip()
+    share_frame["share"] = pd.to_numeric(share_frame["share"], errors="coerce").fillna(0.0)
+    share_frame = share_frame[share_frame["share"] > 0].copy()
+    total_share = float(share_frame["share"].sum())
+    if total_share <= 0:
+        return pd.DataFrame(columns=["admin1_norm", "share"]), None
+    share_frame["share"] = share_frame["share"] / total_share
+    return share_frame[["admin1_norm", "share"]], {
+        "label": "custom Lebanon 2026 profile",
+    }
+
+
 def apply_lebanon_displacement_fallback(df, value_col="displaced_in"):
     out = ensure_displacement_metadata(df)
 
@@ -209,13 +253,20 @@ def apply_lebanon_displacement_fallback(df, value_col="displaced_in"):
             (out["month_num"] == month_num)
         )
         current_total = float(out.loc[month_mask, value_col].sum())
+        existing_adjusted = bool(
+            month_mask.any() and
+            DISPLACEMENT_ADJUSTED_FLAG_COL in out.columns and
+            _normalize_adjusted_flag(out.loc[month_mask, DISPLACEMENT_ADJUSTED_FLAG_COL]).any()
+        )
         threshold = target_total * apply_below
-        should_apply = out.loc[month_mask].empty or current_total < threshold
+        should_apply = out.loc[month_mask].empty or current_total < threshold or existing_adjusted
 
         if not should_apply:
             continue
 
-        share_frame, basis_period = _latest_positive_share_frame(out, value_col, year, month_num)
+        share_frame, basis_period = _share_frame_from_rule(rule)
+        if share_frame.empty:
+            share_frame, basis_period = _latest_positive_share_frame(out, value_col, year, month_num)
         if share_frame.empty:
             continue
 
@@ -230,10 +281,12 @@ def apply_lebanon_displacement_fallback(df, value_col="displaced_in"):
         if "displaced_from" in out.columns:
             replacement["displaced_from"] = 0
 
-        basis_label = (
-            f"{basis_period['month']} {basis_period['year']}"
-            if basis_period else "the latest observed period"
-        )
+        if basis_period and basis_period.get("label"):
+            basis_label = basis_period["label"]
+        elif basis_period:
+            basis_label = f"{basis_period['month']} {basis_period['year']}"
+        else:
+            basis_label = "the latest observed period"
         replacement[DISPLACEMENT_ADJUSTED_FLAG_COL] = True
         replacement[DISPLACEMENT_SOURCE_NOTE_COL] = (
             f"{rule['note']} Basis period: {basis_label}. "

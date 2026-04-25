@@ -13,7 +13,9 @@ from lebanon_displacement_fallback import (
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-main_path = BASE_DIR / "data" / "cleaned" / "global" / "displacement_admin1_destination_monthly_2024_2026.csv"
+main_default_path = BASE_DIR / "data" / "cleaned" / "global" / "displacement_admin1_destination_monthly_2024_2026.csv"
+main_override_path = BASE_DIR / "data" / "cleaned" / "global" / "displacement_admin1_destination_monthly_2024_2026_override.csv"
+main_path = main_override_path if main_override_path.exists() else main_default_path
 lbn_2026_path = BASE_DIR / "data" / "cleaned" / "global" / "lebanon_displacement_2026_from_events.csv"
 
 

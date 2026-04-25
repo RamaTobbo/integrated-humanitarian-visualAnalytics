@@ -19,6 +19,8 @@ import streamlit.components.v1 as components
 
 import hierarchy_aggregation as hierarchy
 from dashboard_compare_utils import (
+    PRIORITY_CHART_SPECS,
+    build_country_priority_bar_chart,
     build_country_comparison_radar,
     prepare_radar_comparison_data,
 )
@@ -353,6 +355,7 @@ button[data-testid="baseButton-primary"]:hover {
 
 #MainMenu, footer{ visibility: hidden; }
 [data-testid="stToolbar"] { display: none; }
+[data-testid="stSidebarNav"] { display: none !important; }
 
 hr { border-color: var(--border) !important; }
 
@@ -455,7 +458,9 @@ conflict_country_path    = BASE_DIR / "data" / "cleaned" / "global"     / "confl
 conflict_admin_path      = BASE_DIR / "data" / "cleaned" / "global"     / "admin1_monthlybytype_with_centroids.csv"
 priority_country_path    = BASE_DIR / "data" / "cleaned" / "global"     / "global_priority_country_with_displacement_monthly.csv"
 priority_admin1_path     = BASE_DIR / "data" / "cleaned" / "global"     / "global_priority_admin1_with_displacement_monthly.csv"
-displacement_dest_path   = BASE_DIR / "data" / "cleaned" / "global"     / "displacement_admin1_destination_monthly_2024_2026.csv"
+displacement_dest_override_path = BASE_DIR / "data" / "cleaned" / "global" / "displacement_admin1_destination_monthly_2024_2026_override.csv"
+displacement_dest_default_path  = BASE_DIR / "data" / "cleaned" / "global" / "displacement_admin1_destination_monthly_2024_2026.csv"
+displacement_dest_path          = displacement_dest_override_path if displacement_dest_override_path.exists() else displacement_dest_default_path
 displacement_origin_path = BASE_DIR / "data" / "cleaned" / "global"     / "displacement_admin1_origin_monthly_2024_2026.csv"
 country_boundaries_dir   = BASE_DIR / "data" / "cleaned" / "boundaries" / "countries"
 lbn_admin2_fallback_path = BASE_DIR / "data" / "raw"     / "boundaries" / "geoBoundaries-LBN-ADM2.geojson"
@@ -748,6 +753,73 @@ def build_available_periods(*frames):
         .sort_values(["year", "month_num"])
         .reset_index(drop=True)
     )
+
+
+def filter_rows_with_positive_metrics(frame, metrics):
+    if frame is None or frame.empty:
+        return pd.DataFrame(columns=getattr(frame, "columns", []))
+
+    metric_list = [metrics] if isinstance(metrics, str) else list(metrics)
+    work = frame.copy()
+    positive_mask = pd.Series(False, index=work.index)
+    for metric in metric_list:
+        if metric not in work.columns:
+            continue
+        values = pd.to_numeric(work[metric], errors="coerce").fillna(0)
+        positive_mask = positive_mask | (values > 0)
+    if not bool(positive_mask.any()):
+        return work.iloc[0:0].copy()
+    return work.loc[positive_mask].copy()
+
+
+def intersect_available_periods(*frames):
+    period_frames = [build_available_periods(frame) for frame in frames if frame is not None and not frame.empty]
+    period_frames = [frame for frame in period_frames if not frame.empty]
+    if not period_frames:
+        return pd.DataFrame(columns=["year", "month_num", "month"])
+
+    shared = period_frames[0][["year", "month_num"]].drop_duplicates()
+    for frame in period_frames[1:]:
+        shared = shared.merge(frame[["year", "month_num"]].drop_duplicates(), on=["year", "month_num"], how="inner")
+        if shared.empty:
+            return pd.DataFrame(columns=["year", "month_num", "month"])
+
+    month_lookup = (
+        pd.concat(period_frames, ignore_index=True)
+        .drop_duplicates(subset=["year", "month_num", "month"])
+        .sort_values(["year", "month_num", "month"])
+    )
+    return (
+        shared.merge(month_lookup, on=["year", "month_num"], how="left")
+        .drop_duplicates(subset=["year", "month_num"])
+        .sort_values(["year", "month_num"])
+        .reset_index(drop=True)
+    )
+
+
+def build_country_priority_mode_periods(priority_mode, admin1_rows, country_rows, displacement_rows):
+    admin1_priority_periods = build_available_periods(
+        filter_rows_with_positive_metrics(admin1_rows, "priority_score_country")
+    )
+
+    if priority_mode == "Displacement Priority":
+        return build_available_periods(
+            filter_rows_with_positive_metrics(displacement_rows, "displaced_in")
+        )
+
+    if priority_mode == "Health Priority":
+        return intersect_available_periods(
+            filter_rows_with_positive_metrics(admin1_rows, "priority_score_country"),
+            filter_rows_with_positive_metrics(country_rows, "health_priority_score"),
+        )
+
+    if priority_mode == "Education Priority":
+        return intersect_available_periods(
+            filter_rows_with_positive_metrics(admin1_rows, "priority_score_country"),
+            filter_rows_with_positive_metrics(country_rows, "education_priority_score"),
+        )
+
+    return admin1_priority_periods
 
 def ensure_required_files():
     required = [
@@ -1091,6 +1163,23 @@ def _fallback_priority_score(frame):
     if active_weight <= 0:
         return score
     return score / active_weight
+
+
+def derive_admin1_service_priority(frame, country_service_score):
+    work = ensure_numeric_columns(
+        frame.copy(),
+        ["priority_score_country", "events", "fatalities", "population_exposure", "displaced", "displaced_in"],
+    )
+    service_score = float(pd.to_numeric(country_service_score, errors="coerce")) if pd.notna(country_service_score) else 0.0
+    if service_score <= 0:
+        return pd.Series(0.0, index=work.index, dtype="float64")
+
+    base_signal = pd.to_numeric(work["priority_score_country"], errors="coerce").fillna(0.0)
+    if float(base_signal.sum()) <= 0:
+        base_signal = _fallback_priority_score(work)
+
+    scaled_signal = scale_to_max(base_signal)
+    return scaled_signal * service_score
 
 def district_signal_weights(frame):
     return hierarchy.allocation_weights(frame)
@@ -1680,6 +1769,7 @@ def build_intro_story_html(video_uri, image_uris, story_stats):
       background: rgba(255,255,255,0.05);
       backdrop-filter: blur(10px);
       box-shadow: 0 18px 38px rgba(0,0,0,0.16);
+      overflow: hidden;
     }}
     .story-step--light .story-stat-card,
     .story-step--light .story-priority-card,
@@ -1706,15 +1796,17 @@ def build_intro_story_html(video_uri, image_uris, story_stats):
     .story-priority-card__value,
     .story-formula-card__value {{
       margin-top: 18px;
-      font-size: clamp(28px, 3.8vw, 44px);
+      font-size: clamp(20px, 2.8vw, 36px);
       font-weight: 500;
-      line-height: 1.04;
+      line-height: 1.1;
       letter-spacing: 0.02em;
+      word-break: break-word;
+      overflow-wrap: break-word;
     }}
     .story-formula-card__value {{
-      font-size: clamp(22px, 2.8vw, 30px);
+      font-size: clamp(16px, 2vw, 26px);
       text-transform: uppercase;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.06em;
     }}
     .story-stat-card__copy,
     .story-priority-card__copy,
@@ -5932,6 +6024,7 @@ defaults = [
     ("country_month",None),
     ("country_event_type","All"),
     ("country_metric","events"),
+    ("country_priority_mode","Conflict Priority"),
     ("country_admin1_drilldown", None),
     ("country_map_level","admin1"),
     ("show_intro", True),
@@ -7157,6 +7250,8 @@ if st.session_state["view"] == "world":
             .agg({
                 "events":"sum","fatalities":"sum","population_exposure":"sum",
                 "displaced":"sum",
+                "events_norm":"mean",
+                "fatalities_norm":"mean",
                 "country_priority_score":"mean",
                 "country_priority_score_base":"mean",
                 "country_priority_rank":"min",
@@ -7371,12 +7466,52 @@ if st.session_state["view"] == "world":
                 if radar_payload["wide_df"].empty:
                     st.info("No comparison data is available for the selected countries in this period.")
                 else:
-                    radar_fig = build_country_comparison_radar(radar_payload["wide_df"], None)
-                    st.plotly_chart(
-                        radar_fig,
-                        use_container_width=True,
-                        key=f"world_country_comparison_{selected_year}_{selected_month}",
-                    )
+                    comparison_tabs = st.tabs(["Radar", "Priority Chart"])
+                    with comparison_tabs[0]:
+                        radar_fig = build_country_comparison_radar(radar_payload["wide_df"], None)
+                        st.plotly_chart(
+                            radar_fig,
+                            use_container_width=True,
+                            key=f"world_country_comparison_{selected_year}_{selected_month}",
+                        )
+
+                    with comparison_tabs[1]:
+                        priority_chart_options = {
+                            spec["label"]: spec["key"] for spec in PRIORITY_CHART_SPECS
+                        }
+                        selected_priority_chart_label = st.selectbox(
+                            "Compare selected countries by",
+                            list(priority_chart_options.keys()),
+                            key="world_compare_priority_metric",
+                            help=(
+                                "Overall Priority uses the combined country score. "
+                                "You can also switch to one factor at a time."
+                            ),
+                        )
+                        selected_priority_chart_key = priority_chart_options[selected_priority_chart_label]
+                        priority_chart_fig = build_country_priority_bar_chart(
+                            radar_payload["wide_df"],
+                            selected_priority_chart_key,
+                        )
+                        st.plotly_chart(
+                            priority_chart_fig,
+                            use_container_width=True,
+                            key=(
+                                f"world_country_priority_chart_"
+                                f"{selected_year}_{selected_month}_{selected_priority_chart_key}"
+                            ),
+                        )
+                        if selected_priority_chart_key == "overall_priority":
+                            st.caption(
+                                "Bar chart is used here because it compares country priority levels more clearly "
+                                "than a pie chart. Overall Priority combines conflict, fatalities, displacement, "
+                                "exposure, health, and education."
+                            )
+                        else:
+                            st.caption(
+                                "This view isolates one factor at a time so you can compare the selected countries "
+                                "without mixing the other dimensions."
+                            )
 
         st.markdown(
             f'<div class="section-title"><span class="section-dot"></span>Top 10 by {metric_label(metric)}</div>',
@@ -7453,6 +7588,12 @@ else:
     country_conflict_rows = get_country_admin_rows(admin_conflict, selected_country_name)
     country_conflict_country_rows = get_country_admin_rows(country_conflict, selected_country_name)
     country_priority_rows = get_country_admin_rows(admin1_priority, selected_country_name)
+    selected_country_priority_country_rows = get_country_admin_rows(
+        country_priority,
+        selected_country_name,
+    )
+    country_displacement_dest_rows = displacement_dest[displacement_dest["country"] == selected_country_norm].copy()
+    country_displacement_origin_rows = displacement_origin[displacement_origin["country"] == selected_country_norm].copy()
 
     if country_conflict_rows.empty and country_conflict_country_rows.empty and country_priority_rows.empty:
         st.warning("No admin-level data found for this country.")
@@ -7461,31 +7602,39 @@ else:
     st.sidebar.markdown('<div class="sidebar-section">Country View</div>', unsafe_allow_html=True)
     country_mode = st.sidebar.radio("Mode", ["Conflict", "Priority"], horizontal=True)
 
-    selected_country_norm = canonical_country_norm(selected_country_name)
-    priority_periods = build_available_periods(
+    selected_priority_mode = None
+    if country_mode == "Priority":
+        st.sidebar.markdown('<div class="sidebar-section">Metric</div>', unsafe_allow_html=True)
+        default_priority_mode = st.session_state.get("country_priority_mode", "Conflict Priority")
+        selected_priority_mode = st.sidebar.selectbox(
+            "Priority Filter",
+            PRIORITY_MODE_OPTIONS,
+            index=PRIORITY_MODE_OPTIONS.index(default_priority_mode)
+                  if default_priority_mode in PRIORITY_MODE_OPTIONS else 0,
+        )
+        st.session_state["country_priority_mode"] = selected_priority_mode
+
+    priority_periods = build_country_priority_mode_periods(
+        selected_priority_mode or st.session_state.get("country_priority_mode", "Conflict Priority"),
         country_priority_rows,
-        displacement_dest[displacement_dest["country"] == selected_country_norm],
-        displacement_origin[displacement_origin["country"] == selected_country_norm],
+        selected_country_priority_country_rows,
+        country_displacement_dest_rows,
     )
     conflict_periods = build_available_periods(
         country_conflict_rows,
         country_conflict_country_rows,
     )
-    available_source = (
-        conflict_periods
-        if country_mode == "Conflict"
-        else priority_periods
-    )
-    if available_source.empty:
-        available_source = (
-            conflict_periods
-            if not conflict_periods.empty
-            else priority_periods
-        )
+    if country_mode == "Conflict":
+        available_source = conflict_periods if not conflict_periods.empty else priority_periods
+    else:
+        available_source = priority_periods
     avail_years = sorted(available_source["year"].dropna().unique().tolist())
 
     if not avail_years:
-        st.warning("No years available.")
+        if country_mode == "Priority":
+            st.warning(f"No periods with {selected_priority_mode.lower()} data are available for {selected_country_name}.")
+        else:
+            st.warning("No years available.")
         st.stop()
 
     if st.session_state["country_year"] is None or st.session_state["country_year"] not in avail_years:
@@ -7532,11 +7681,6 @@ else:
       <div class="dash-badge">{selected_iso3}</div>
     </div>
     """, unsafe_allow_html=True)
-
-    selected_country_priority_country_rows = get_country_admin_rows(
-        country_priority,
-        selected_country_name,
-    )
     selected_country_priority_row = get_country_priority_period_row(
         selected_country_priority_country_rows,
         selected_year,
@@ -7547,8 +7691,6 @@ else:
         selected_year,
         selected_month,
     )
-
-    selected_priority_mode = None
 
     if country_mode == "Conflict":
         conflict_period_rows = country_conflict_rows[
@@ -7837,11 +7979,6 @@ else:
                 render_top10_grid(top_admin, "admin_name", selected_metric, fmt_fn=fmt_big)
 
     else:
-        selected_priority_mode = st.sidebar.selectbox(
-            "Priority Filter",
-            PRIORITY_MODE_OPTIONS,
-            index=0,
-        )
         selected_metric = COUNTRY_PRIORITY_MODE_TO_METRIC[selected_priority_mode]
 
         priority_slice = country_priority_rows[
@@ -7860,6 +7997,10 @@ else:
             agg_dict["displaced"] = "sum"
         if "population_exposure" in priority_slice.columns:
             agg_dict["population_exposure"] = "sum"
+        if "events_norm_country" in priority_slice.columns:
+            agg_dict["events_norm_country"] = "mean"
+        if "fatalities_norm_country" in priority_slice.columns:
+            agg_dict["fatalities_norm_country"] = "mean"
         if "priority_score_country" in priority_slice.columns:
             agg_dict["priority_score_country"] = "mean"
         if "priority_score_global" in priority_slice.columns:
@@ -7898,18 +8039,23 @@ else:
             merged["displaced_in"] = dest_displaced.where(dest_displaced > 0, base_displaced)
             merged = merged.drop(columns=["displaced_in_dest"])
 
-        for col in ["events","fatalities","displaced","population_exposure","priority_score_country",
-                    "priority_score_global","displaced_in","health_priority_score","education_priority_score"]:
+        for col in ["events","fatalities","displaced","population_exposure","events_norm_country",
+                    "fatalities_norm_country","priority_score_country","priority_score_global",
+                    "displaced_in","health_priority_score","education_priority_score"]:
             if col not in merged.columns:
                 merged[col] = 0
             merged[col] = pd.to_numeric(merged[col], errors="coerce").fillna(0)
         merged["displaced"] = merged["displaced"].where(merged["displaced"] > 0, merged["displaced_in"])
 
         country_priority_values = row_to_values(selected_country_priority_row)
+        service_metric_is_derived = False
         for service_score_col in ["health_priority_score", "education_priority_score"]:
             country_score = numeric_value(country_priority_values, service_score_col)
-            if country_score > 0 and float(pd.to_numeric(merged[service_score_col], errors="coerce").fillna(0).sum()) <= 0:
-                merged[service_score_col] = country_score
+            existing_values = pd.to_numeric(merged[service_score_col], errors="coerce").fillna(0)
+            if country_score > 0 and float(existing_values.sum()) <= 0:
+                merged[service_score_col] = derive_admin1_service_priority(merged, country_score)
+                if service_score_col == selected_metric:
+                    service_metric_is_derived = True
 
         priority_fallback = _fallback_priority_score(merged)
         for score_col in ["priority_score_country", "priority_score_global"]:
@@ -7944,9 +8090,16 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
+        if service_metric_is_derived:
+            st.caption(
+                f"{selected_priority_mode} is derived for admin1 areas by scaling each area's conflict priority "
+                f"with the country-level {selected_priority_mode.lower()} score, because this country does not "
+                "have admin1-specific service indicators in the current dataset."
+            )
+
         render_country_need_detail(selected_country_name, selected_country_priority_row)
 
-        if selected_metric in ["priority_score_country", "priority_score_global", "health_priority_score", "education_priority_score"]:
+        if is_score_metric(selected_metric):
             cscale = map_scale_for_metric(selected_metric)
             fmt_fn = lambda v: f"{v:.3f}"
         elif selected_metric == "fatalities":

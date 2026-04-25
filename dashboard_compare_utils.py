@@ -10,6 +10,16 @@ RADAR_AXIS_SPECS = [
     {"key": "education_need", "label": "Education Need", "source_col": "education_priority_score"},
 ]
 
+PRIORITY_CHART_SPECS = [
+    {"key": "overall_priority", "label": "Overall Priority", "source_col": "country_priority_score"},
+    {"key": "conflict", "label": "Conflict", "source_col": "conflict"},
+    {"key": "fatalities", "label": "Fatalities", "source_col": "fatalities"},
+    {"key": "displacement", "label": "Displacement", "source_col": "displacement"},
+    {"key": "exposure", "label": "Exposure", "source_col": "exposure"},
+    {"key": "health_need", "label": "Health Need", "source_col": "health_need"},
+    {"key": "education_need", "label": "Education Need", "source_col": "education_need"},
+]
+
 RADAR_COLORS = ["#0d657d", "#da323f", "#ff8112", "#8b5e3c", "#b48a64"]
 
 
@@ -178,6 +188,83 @@ def build_country_comparison_radar(radar_df, scaling_option=None):
             yanchor="top",
             pad=dict(b=16),
             font=dict(family="Playfair Display", size=22, color="#1b2230"),
+        ),
+    )
+    return fig
+
+
+def build_country_priority_bar_chart(priority_df, metric_key):
+    spec_lookup = {spec["key"]: spec for spec in PRIORITY_CHART_SPECS}
+    metric_spec = spec_lookup.get(metric_key, spec_lookup["overall_priority"])
+    chart_df = priority_df.copy()
+    if chart_df.empty:
+        return go.Figure()
+
+    label_source = "country_label" if "country_label" in chart_df.columns else "country"
+    chart_df["country_display"] = chart_df[label_source].astype(str).str.strip()
+    chart_df["metric_value"] = pd.to_numeric(
+        chart_df.get(metric_spec["source_col"], 0),
+        errors="coerce",
+    ).fillna(0.0)
+    chart_df = (
+        chart_df.sort_values(["metric_value", "country_display"], ascending=[False, True])
+        .reset_index(drop=True)
+    )
+
+    colors = [RADAR_COLORS[index % len(RADAR_COLORS)] for index in range(len(chart_df))]
+    x_max = float(chart_df["metric_value"].max()) if not chart_df.empty else 0.0
+    x_limit = max(1.0, x_max * 1.15) if x_max > 0 else 1.0
+
+    fig = go.Figure(
+        go.Bar(
+            x=chart_df["metric_value"],
+            y=chart_df["country_display"],
+            orientation="h",
+            marker=dict(
+                color=colors,
+                line=dict(color="#ffffff", width=1),
+            ),
+            text=[f"{value:.3f}" for value in chart_df["metric_value"]],
+            textposition="outside",
+            hovertemplate=(
+                "<b>%{y}</b><br>"
+                + f"{metric_spec['label']}: "
+                + "%{x:.3f}<extra></extra>"
+            ),
+        )
+    )
+
+    fig.update_layout(
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#ffffff",
+        margin=dict(l=30, r=30, t=120, b=25),
+        height=max(420, 150 + len(chart_df) * 62),
+        title=dict(
+            text=f"{metric_spec['label']} Across Selected Countries",
+            x=0.01,
+            xanchor="left",
+            y=0.99,
+            yanchor="top",
+            pad=dict(b=16),
+            font=dict(family="Playfair Display", size=22, color="#1b2230"),
+        ),
+        xaxis=dict(
+            title=metric_spec["label"],
+            range=[0, x_limit],
+            tickfont=dict(family="Inter", size=10, color="#5a6577"),
+            title_font=dict(family="Inter", size=11, color="#1b2230"),
+            gridcolor="#eef1f6",
+            zeroline=False,
+        ),
+        yaxis=dict(
+            autorange="reversed",
+            tickfont=dict(family="Inter", size=11, color="#1b2230"),
+            showgrid=False,
+        ),
+        hoverlabel=dict(
+            bgcolor="white",
+            bordercolor="#e4e8ef",
+            font=dict(family="Inter", size=12, color="#1b2230"),
         ),
     )
     return fig
