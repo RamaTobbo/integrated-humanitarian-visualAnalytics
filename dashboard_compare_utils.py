@@ -10,6 +10,8 @@ RADAR_AXIS_SPECS = [
     {"key": "education_need", "label": "Education Need", "source_col": "education_priority_score"},
 ]
 
+# this is for the extra priority chart:
+# user can see the final combined score or check each factor alone
 PRIORITY_CHART_SPECS = [
     {"key": "overall_priority", "label": "Overall Priority", "source_col": "country_priority_score"},
     {"key": "conflict", "label": "Conflict", "source_col": "conflict"},
@@ -202,6 +204,7 @@ def build_country_priority_bar_chart(priority_df, metric_key):
 
     label_source = "country_label" if "country_label" in chart_df.columns else "country"
     chart_df["country_display"] = chart_df[label_source].astype(str).str.strip()
+    # here we take only the selected metric the user chose from the filter
     chart_df["metric_value"] = pd.to_numeric(
         chart_df.get(metric_spec["source_col"], 0),
         errors="coerce",
@@ -215,6 +218,7 @@ def build_country_priority_bar_chart(priority_df, metric_key):
     x_max = float(chart_df["metric_value"].max()) if not chart_df.empty else 0.0
     x_limit = max(1.0, x_max * 1.15) if x_max > 0 else 1.0
 
+    # bar chart is better here than pie chart because we are comparing countries
     fig = go.Figure(
         go.Bar(
             x=chart_df["metric_value"],

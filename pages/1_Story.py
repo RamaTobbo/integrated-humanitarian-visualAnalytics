@@ -506,7 +506,7 @@ INTRO_STORY_MOTION = {
 
 INTRO_STORY_COPY = {
     # Replace these messages with your final scrollytelling text later.
-    "hero_eyebrow": "Conflict Intelligence Story",
+    "hero_eyebrow": "Priority And Conflict Story",
     "hero_title": "Conflicts: never only a battle.",
     "hero_body": "It expands into displacement, interrupted services, and harder decisions about where help should go first.",
     "slide_1_eyebrow": "01 / Global Conflict",
@@ -581,6 +581,9 @@ COUNTRY_CANONICAL_ALIASES = {
     "syrian arab republic":"syria",
     "iran (islamic republic of)":"iran",
     "islamic republic of iran":"iran",
+    # these map names are different between the geojson and the data tables
+    "united states":"united states of america",
+    "usa":"united states of america",
     "venezuela, bolivarian republic of":"venezuela",
     "bolivia (plurinational state of)":"bolivia",
     "united republic of tanzania":"tanzania",
@@ -591,7 +594,15 @@ COUNTRY_CANONICAL_ALIASES = {
     "democratic republic of congo":"democratic republic of the congo",
     "congo, dem. rep.":"democratic republic of the congo",
     "dr congo":"democratic republic of the congo",
+    "dem. rep. congo":"democratic republic of the congo",
     "congo, rep.":"republic of the congo",
+    "s. sudan":"south sudan",
+    "central african rep.":"central african republic",
+    "bosnia and herz.":"bosnia and herzegovina",
+    "dominican rep.":"dominican republic",
+    "cote d'ivoire":"ivory coast",
+    "antigua and barb.":"antigua and barbuda",
+    "br. indian ocean ter.":"british indian ocean territory",
 }
 
 NON_ADMIN_LOCATIONS = {
@@ -1252,30 +1263,37 @@ def metric_label(metric):
         "events":"Events","fatalities":"Fatalities",
         "population_exposure":"Pop. Exposure","displaced":"Displacement Priority",
         "displaced_in":"Displacement Priority",
-        "country_priority_score":"Conflict Priority",
-        "country_priority_score_base":"Conflict Priority",
+        "country_priority_score":"Overall Priority",
+        "country_priority_score_base":"Base Priority",
         "health_priority_score":"Health Priority",
         "education_priority_score":"Education Priority",
-        "priority_score_country":"Conflict Priority",
-        "priority_score_global":"Priority Score (Global)",
+        "priority_score_country":"Admin1 Conflict Priority",
+        "priority_score_global":"Overall Priority (Global)",
     }.get(metric, metric)
 
-PRIORITY_MODE_OPTIONS = [
-    "Conflict Priority",
+WORLD_PRIORITY_MODE_OPTIONS = [
+    "Overall Priority",
+    "Displacement Priority",
+    "Health Priority",
+    "Education Priority",
+]
+
+COUNTRY_PRIORITY_MODE_OPTIONS = [
+    "Admin1 Conflict Priority",
     "Displacement Priority",
     "Health Priority",
     "Education Priority",
 ]
 
 WORLD_PRIORITY_MODE_TO_METRIC = {
-    "Conflict Priority": "country_priority_score",
+    "Overall Priority": "country_priority_score",
     "Displacement Priority": "displaced",
     "Health Priority": "health_priority_score",
     "Education Priority": "education_priority_score",
 }
 
 COUNTRY_PRIORITY_MODE_TO_METRIC = {
-    "Conflict Priority": "priority_score_country",
+    "Admin1 Conflict Priority": "priority_score_country",
     "Displacement Priority": "displaced",
     "Health Priority": "health_priority_score",
     "Education Priority": "education_priority_score",
@@ -2786,8 +2804,17 @@ def render_displacement_snapshot_overview(
     displacement_mode="latest",
 ):
     cnorm = canonical_country_norm(selected_country_name)
-    total_events_full = float(admin_conflict[admin_conflict["country_norm"] == cnorm]["events"].sum())
-    total_fat_full = float(admin_conflict[admin_conflict["country_norm"] == cnorm]["fatalities"].sum())
+    cumulative_conflict = filter_event_type(
+        country_conflict[country_conflict["country_norm"] == cnorm].copy(),
+        "All",
+    )
+    if cumulative_conflict.empty:
+        cumulative_conflict = filter_event_type(
+            admin_conflict[admin_conflict["country_norm"] == cnorm].copy(),
+            "All",
+        )
+    total_events_full = float(cumulative_conflict["events"].sum())
+    total_fat_full = float(cumulative_conflict["fatalities"].sum())
 
     total_arrived = float(arrivals_snapshot["displaced_in"].sum()) if not arrivals_snapshot.empty else 0.0
     total_departed = 0.0
@@ -3591,25 +3618,10 @@ def render_education_priority_country_story(period_country, selected_country_nam
         overflow: hidden;
     }}
     .education-story-visual::before {{
-        content: "";
-        position: absolute;
-        inset: 34px 30px auto 30px;
-        height: 118px;
-        border-radius: 50% 46% 54% 42%;
-        background: rgba(168, 134, 74, 0.16);
-        border: 1px solid rgba(168, 134, 74, 0.22);
-        transform: rotate(-8deg);
+        content: none;
     }}
     .education-story-visual::after {{
-        content: "";
-        position: absolute;
-        width: 92px;
-        height: 92px;
-        border-radius: 50%;
-        background: rgba(44, 74, 110, 0.12);
-        border: 1px solid rgba(44, 74, 110, 0.18);
-        right: 42px;
-        top: 84px;
+        content: none;
     }}
     .education-story-pin {{
         position: relative;
@@ -3760,7 +3772,6 @@ def _health_country_story_card(row, score_col, config, period_label):
     events = float(row["events"])
     exposure = float(row["population_exposure"])
     score = float(row[score_col])
-    support_proxy = float(row["health_support_proxy"])
     conflict_index = float(row["conflict_index"])
     health_index = float(row["health_access_weakness_index"])
     exposure_index = float(row["exposure_index"])
@@ -3845,11 +3856,6 @@ def _health_country_story_card(row, score_col, config, period_label):
         '<div class="health-pathway-narrative">'
         f"<strong>{escape(story_lead)}</strong>"
         f"<p>{escape(narrative)}</p>"
-        "</div>"
-        '<div class="health-pathway-impact">'
-        "<span>Estimated health support need</span>"
-        f'<strong>{fmt_big(support_proxy) if support_proxy > 0 else "N/A"}</strong>'
-        "<em>Exposure weighted by health priority</em>"
         "</div>"
         "</div>"
         f'<div class="education-story-bars health-pathway-bars">{bars}</div>'
@@ -4061,10 +4067,7 @@ def render_health_priority_country_story(period_country, selected_country_name, 
         line-height: 1.45;
     }
     .health-pathway-bottom {
-        display: grid;
-        grid-template-columns: 1.8fr 0.8fr;
-        gap: 14px;
-        align-items: stretch;
+        display: block;
         margin-bottom: 16px;
     }
     .health-pathway-narrative {
@@ -4087,38 +4090,6 @@ def render_health_priority_country_story(period_country, selected_country_name, 
         font-size: 13px;
         color: #5a6577;
         line-height: 1.75;
-    }
-    .health-pathway-impact {
-        background: #f7f8fa;
-        border: 1px solid #e4e8ef;
-        border-radius: 8px;
-        padding: 14px 16px;
-    }
-    .health-pathway-impact span {
-        display: block;
-        font-family: 'Inter', sans-serif;
-        font-size: 10px;
-        font-weight: 700;
-        letter-spacing: 0.11em;
-        text-transform: uppercase;
-        color: #8893a4;
-        margin-bottom: 8px;
-    }
-    .health-pathway-impact strong {
-        display: block;
-        font-family: 'Playfair Display', serif;
-        font-size: 25px;
-        line-height: 1.1;
-        color: #1b2230;
-    }
-    .health-pathway-impact em {
-        display: block;
-        margin-top: 6px;
-        font-family: 'Inter', sans-serif;
-        font-size: 11px;
-        font-style: normal;
-        color: #8893a4;
-        line-height: 1.45;
     }
     @media (max-width: 900px) {
         .health-pathway-head,
@@ -4217,25 +4188,10 @@ def render_health_priority_country_story(period_country, selected_country_name, 
         overflow: hidden;
     }}
     .education-story-visual::before {{
-        content: "";
-        position: absolute;
-        inset: 34px 30px auto 30px;
-        height: 118px;
-        border-radius: 50% 46% 54% 42%;
-        background: rgba(168, 134, 74, 0.16);
-        border: 1px solid rgba(168, 134, 74, 0.22);
-        transform: rotate(-8deg);
+        content: none;
     }}
     .education-story-visual::after {{
-        content: "";
-        position: absolute;
-        width: 92px;
-        height: 92px;
-        border-radius: 50%;
-        background: rgba(44, 74, 110, 0.12);
-        border: 1px solid rgba(44, 74, 110, 0.18);
-        right: 42px;
-        top: 84px;
+        content: none;
     }}
     .education-story-pin {{
         position: relative;
@@ -6024,7 +5980,7 @@ defaults = [
     ("country_month",None),
     ("country_event_type","All"),
     ("country_metric","events"),
-    ("country_priority_mode","Conflict Priority"),
+    ("country_priority_mode","Admin1 Conflict Priority"),
     ("country_admin1_drilldown", None),
     ("country_map_level","admin1"),
     ("show_intro", True),
@@ -7233,11 +7189,13 @@ if st.session_state["view"] == "world":
         st.sidebar.markdown('<div class="sidebar-section">Metric</div>', unsafe_allow_html=True)
         selected_priority_mode = st.sidebar.selectbox(
             "Priority Filter",
-            PRIORITY_MODE_OPTIONS,
+            WORLD_PRIORITY_MODE_OPTIONS,
             index=0,
             label_visibility="collapsed",
         )
         metric = WORLD_PRIORITY_MODE_TO_METRIC[selected_priority_mode]
+        if selected_priority_mode == "Overall Priority":
+            st.sidebar.caption("Includes conflict, displacement, exposure, health, and education at country level.")
 
         filtered = base_df[(base_df["year"] == selected_year) &
                            (base_df["month"].str.lower() == selected_month.lower())].copy()
@@ -7466,6 +7424,8 @@ if st.session_state["view"] == "world":
                 if radar_payload["wide_df"].empty:
                     st.info("No comparison data is available for the selected countries in this period.")
                 else:
+                    # keep the radar because it shows the shape of the country profile
+                    # add another tab for ranking the selected countries more clearly
                     comparison_tabs = st.tabs(["Radar", "Priority Chart"])
                     with comparison_tabs[0]:
                         radar_fig = build_country_comparison_radar(radar_payload["wide_df"], None)
@@ -7476,6 +7436,8 @@ if st.session_state["view"] == "world":
                         )
 
                     with comparison_tabs[1]:
+                        # this filter lets the user compare all factors together
+                        # or focus on one factor alone
                         priority_chart_options = {
                             spec["label"]: spec["key"] for spec in PRIORITY_CHART_SPECS
                         }
@@ -7501,17 +7463,7 @@ if st.session_state["view"] == "world":
                                 f"{selected_year}_{selected_month}_{selected_priority_chart_key}"
                             ),
                         )
-                        if selected_priority_chart_key == "overall_priority":
-                            st.caption(
-                                "Bar chart is used here because it compares country priority levels more clearly "
-                                "than a pie chart. Overall Priority combines conflict, fatalities, displacement, "
-                                "exposure, health, and education."
-                            )
-                        else:
-                            st.caption(
-                                "This view isolates one factor at a time so you can compare the selected countries "
-                                "without mixing the other dimensions."
-                            )
+                     
 
         st.markdown(
             f'<div class="section-title"><span class="section-dot"></span>Top 10 by {metric_label(metric)}</div>',
@@ -7605,17 +7557,19 @@ else:
     selected_priority_mode = None
     if country_mode == "Priority":
         st.sidebar.markdown('<div class="sidebar-section">Metric</div>', unsafe_allow_html=True)
-        default_priority_mode = st.session_state.get("country_priority_mode", "Conflict Priority")
+        default_priority_mode = st.session_state.get("country_priority_mode", "Admin1 Conflict Priority")
+        if default_priority_mode == "Conflict Priority":
+            default_priority_mode = "Admin1 Conflict Priority"
         selected_priority_mode = st.sidebar.selectbox(
             "Priority Filter",
-            PRIORITY_MODE_OPTIONS,
-            index=PRIORITY_MODE_OPTIONS.index(default_priority_mode)
-                  if default_priority_mode in PRIORITY_MODE_OPTIONS else 0,
+            COUNTRY_PRIORITY_MODE_OPTIONS,
+            index=COUNTRY_PRIORITY_MODE_OPTIONS.index(default_priority_mode)
+                  if default_priority_mode in COUNTRY_PRIORITY_MODE_OPTIONS else 0,
         )
         st.session_state["country_priority_mode"] = selected_priority_mode
 
     priority_periods = build_country_priority_mode_periods(
-        selected_priority_mode or st.session_state.get("country_priority_mode", "Conflict Priority"),
+        selected_priority_mode or st.session_state.get("country_priority_mode", "Admin1 Conflict Priority"),
         country_priority_rows,
         selected_country_priority_country_rows,
         country_displacement_dest_rows,
@@ -8406,7 +8360,7 @@ else:
             st.markdown(f"""
             <div style="padding:20px 0 10px 0;">
               <p style="font-family:'Playfair Display',serif;font-size:22px;font-weight:600;color:#1b2230;line-height:1.4;margin:0 0 10px 0;">
-                Where are displaced people concentrated across {selected_country_name}?
+               Where do most displaced people come from? {selected_country_name}?
               </p>
               <p style="font-family:'Inter',sans-serif;font-size:14px;color:#5a6577;line-height:1.85;margin:0 0 4px 0;max-width:680px;">
                 Each circle represents one admin1 area.

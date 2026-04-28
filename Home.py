@@ -152,32 +152,31 @@ hr { border-color: var(--border) !important; }
 }
 
 /* ── CTA button ── */
-.cta-wrap {
-    display: flex;
-    gap: 12px;
-    margin-top: 18px;
-    margin-bottom: 36px;
+.cta-button-row {
+    margin-top: 10px;
+    margin-bottom: 44px;
 }
-div[data-testid="stButton"].cta-btn > button {
-    background: #ffffff !important;
-    color: var(--accent-ink) !important;
-    border: none !important;
-    border-radius: 12px !important;
-    padding: 14px 32px !important;
+.st-key-cta_story button,
+div[data-testid="stButton"] > button {
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-soft) 100%) !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(44, 74, 110, 0.18) !important;
+    border-radius: 14px !important;
+    padding: 14px 28px !important;
     font-family: 'Inter', sans-serif !important;
     font-weight: 700 !important;
     font-size: 14px !important;
     letter-spacing: 0.02em !important;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.18) !important;
+    box-shadow: 0 10px 24px rgba(44, 74, 110, 0.18) !important;
     transition: all 0.18s ease !important;
     height: auto !important;
     line-height: 1.4 !important;
 }
-div[data-testid="stButton"].cta-btn > button:hover {
-    background: var(--accent-light) !important;
-    color: var(--accent) !important;
+.st-key-cta_story button:hover,
+div[data-testid="stButton"] > button:hover {
     transform: translateY(-2px) !important;
-    box-shadow: 0 8px 28px rgba(0,0,0,0.22) !important;
+    box-shadow: 0 14px 30px rgba(44, 74, 110, 0.22) !important;
+    border-color: rgba(44, 74, 110, 0.24) !important;
 }
 
 /* ── Section headers ── */
@@ -496,8 +495,8 @@ with col2:
             <div class="card-feature">Filter by country, region &amp; time period</div>
             <div class="card-feature">Side-by-side country comparison radar</div>
             <div class="card-feature">Admin-1 breakdown within any country</div>
-            <div class="card-feature">Export-ready tables</div>
-        </div>
+        
+    
     </div>
     """, unsafe_allow_html=True)
 
@@ -529,6 +528,28 @@ components.html("""
     line-height: 1.7;
     color: #5a6577;
     margin-bottom: 24px;
+  }
+  .fc-block {
+    border: 1px solid #e4e8ef;
+    border-radius: 14px;
+    padding: 18px 20px;
+    margin-bottom: 18px;
+    background: #fbfcfe;
+  }
+  .fc-block:last-child { margin-bottom: 0; }
+  .fc-block-title {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #2c4a6e;
+    margin-bottom: 6px;
+  }
+  .fc-block-sub {
+    font-size: 12px;
+    line-height: 1.65;
+    color: #7a8798;
+    margin-bottom: 10px;
   }
   .fc-row {
     display: flex;
@@ -581,16 +602,31 @@ components.html("""
   .fc-note strong { color: #2c4a6e; font-weight: 600; }
 </style>
 <div class="fc">
-  <div class="fc-intro">The Priority Score is a weighted composite of six indicators. Each indicator is normalized (min-max) within the same time period so that areas are always compared against their peers, not against an absolute benchmark. A higher score means the area needs more urgent attention relative to others.</div>
-  <div class="fc-row"><div class="fc-pct">30%</div><div class="fc-bar-wrap"><div class="fc-bar" style="width:100%;background:#2c4a6e;"></div></div><div class="fc-name">Conflict Events</div><div class="fc-why">Number of recorded conflict incidents (battles, explosions, attacks on civilians) from ACLED.</div></div>
-  <div class="fc-row"><div class="fc-pct">30%</div><div class="fc-bar-wrap"><div class="fc-bar" style="width:100%;background:#2c4a6e;"></div></div><div class="fc-name">Fatalities</div><div class="fc-why">Reported deaths from conflict events. Captures severity, not just frequency.</div></div>
-  <div class="fc-row"><div class="fc-pct">20%</div><div class="fc-bar-wrap"><div class="fc-bar" style="width:67%;background:#5a8a82;"></div></div><div class="fc-name">Displacement</div><div class="fc-why">People forced to flee their homes and arrive in this area. A leading indicator of humanitarian load.</div></div>
-  <div class="fc-row"><div class="fc-pct">10%</div><div class="fc-bar-wrap"><div class="fc-bar" style="width:33%;background:#a8864a;"></div></div><div class="fc-name">Population Exposure</div><div class="fc-why">Number of people living in proximity to conflict events — scales severity to population size.</div></div>
-  <div class="fc-row"><div class="fc-pct">7.5%</div><div class="fc-bar-wrap"><div class="fc-bar" style="width:25%;background:#b8703a;"></div></div><div class="fc-name">Health Need</div><div class="fc-why">Country-level health system capacity score (WHO indicators). Low capacity amplifies conflict impact.</div></div>
-  <div class="fc-row"><div class="fc-pct">7.5%</div><div class="fc-bar-wrap"><div class="fc-bar" style="width:25%;background:#b8703a;"></div></div><div class="fc-name">Education Need</div><div class="fc-why">Country-level education access score (UNESCO indicators). Captures longer-term vulnerability.</div></div>
- 
+  <div class="fc-intro">The dashboard uses two related formulas, not one. Both are normalized within the same time period so areas are compared against their peers, not against an absolute benchmark.</div>
+
+  <div class="fc-block">
+    <div class="fc-block-title">Admin1 Conflict Priority</div>
+    <div class="fc-block-sub">Used inside the country page to compare governorates or admin1 areas within the same country.</div>
+    <div class="fc-row"><div class="fc-pct">35%</div><div class="fc-bar-wrap"><div class="fc-bar" style="width:100%;background:#2c4a6e;"></div></div><div class="fc-name">Conflict Events</div><div class="fc-why">Number of recorded conflict incidents from ACLED.</div></div>
+    <div class="fc-row"><div class="fc-pct">35%</div><div class="fc-bar-wrap"><div class="fc-bar" style="width:100%;background:#2c4a6e;"></div></div><div class="fc-name">Fatalities</div><div class="fc-why">Reported deaths from conflict events. Captures severity, not just frequency.</div></div>
+    <div class="fc-row"><div class="fc-pct">20%</div><div class="fc-bar-wrap"><div class="fc-bar" style="width:57%;background:#5a8a82;"></div></div><div class="fc-name">Displacement</div><div class="fc-why">People forced to flee and arrive in this area. A leading indicator of humanitarian load.</div></div>
+    <div class="fc-row"><div class="fc-pct">10%</div><div class="fc-bar-wrap"><div class="fc-bar" style="width:29%;background:#a8864a;"></div></div><div class="fc-name">Population Exposure</div><div class="fc-why">People living in proximity to conflict events, scaled to population pressure.</div></div>
+  </div>
+
+  <div class="fc-block">
+    <div class="fc-block-title">Country Overall Priority Score</div>
+    <div class="fc-block-sub">Used in the worldwide priority view. This adds country-level health and education proxies to the conflict-displacement base.</div>
+    <div class="fc-row"><div class="fc-pct">30%</div><div class="fc-bar-wrap"><div class="fc-bar" style="width:100%;background:#2c4a6e;"></div></div><div class="fc-name">Conflict Events</div><div class="fc-why">Number of recorded conflict incidents from ACLED.</div></div>
+    <div class="fc-row"><div class="fc-pct">30%</div><div class="fc-bar-wrap"><div class="fc-bar" style="width:100%;background:#2c4a6e;"></div></div><div class="fc-name">Fatalities</div><div class="fc-why">Reported deaths from conflict events. Captures severity, not just frequency.</div></div>
+    <div class="fc-row"><div class="fc-pct">18%</div><div class="fc-bar-wrap"><div class="fc-bar" style="width:60%;background:#5a8a82;"></div></div><div class="fc-name">Displacement</div><div class="fc-why">Country-level displacement burden for the selected period.</div></div>
+    <div class="fc-row"><div class="fc-pct">7%</div><div class="fc-bar-wrap"><div class="fc-bar" style="width:23%;background:#a8864a;"></div></div><div class="fc-name">Population Exposure</div><div class="fc-why">Affected population exposure associated with the conflict layer.</div></div>
+    <div class="fc-row"><div class="fc-pct">7.5%</div><div class="fc-bar-wrap"><div class="fc-bar" style="width:25%;background:#b8703a;"></div></div><div class="fc-name">Health Need Proxy</div><div class="fc-why">Country-level health system capacity proxy from processed need indicators.</div></div>
+    <div class="fc-row"><div class="fc-pct">7.5%</div><div class="fc-bar-wrap"><div class="fc-bar" style="width:25%;background:#b8703a;"></div></div><div class="fc-name">Education Need Proxy</div><div class="fc-why">Country-level education access proxy from processed need indicators.</div></div>
+  </div>
+
+  <div class="fc-note"><strong>Important:</strong> health and education are country-level proxies, so they are part of the worldwide overall score, not the admin1 conflict-priority formula.</div>
 </div>
-""", height=520)
+""", height=760)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -633,19 +669,10 @@ st.markdown("""
 
 </div>
 """, unsafe_allow_html=True)
-st.markdown(
-    """
-    <div class="method-note" style="margin-top:4px;">
-        <strong>Presentation mode:</strong> A live demo view is now available with slide-style transitions,
-        keyboard navigation, and presenter notes for each section.
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+left_btn, center_btn, right_btn = st.columns([1.1, 1.35, 1.1], gap="large")
 
-left_btn, right_btn = st.columns(2, gap="large")
-
-with right_btn:
+with center_btn:
+    st.markdown('<div class="cta-button-row"></div>', unsafe_allow_html=True)
     if st.button("Explore the Story →", key="cta_story", use_container_width=True):
         st.switch_page("pages/1_Story.py")
 st.markdown("<br><br>", unsafe_allow_html=True)

@@ -14,18 +14,19 @@ LEBANON_COUNTRY_FALLBACK_RULES = [
         "apply_below_ratio": 0.999,
         "admin1_shares": {
             "al nabatieh": 0.32,
-            "south": 0.31,
+            "south": 0.33,
             "bekaa": 0.12,
-            "baalbek-hermel": 0.10,
-            "beirut": 0.09,
-            "mount lebanon": 0.04,
-            "north": 0.01,
-            "akkar": 0.01,
+            "baalbek-hermel": 0.12,
+            "beirut": 0.11,
+            "mount lebanon": 0.00,
+            "north": 0.00,
+            "akkar": 0.00,
         },
         "note": (
             "Adjusted fallback using a Lebanon admin1 displacement profile that "
             "prioritizes the main conflict-origin and reception pressure areas in "
-            "South, Al Nabatieh, Bekaa, Baalbek-Hermel, and Beirut because "
+            "South, Al Nabatieh, Bekaa, Baalbek-Hermel, and Beirut, while removing "
+            "fallback allocation from North, Akkar, and Mount Lebanon because "
             "February 2026 is missing in the source dataset."
         ),
     },
@@ -36,20 +37,21 @@ LEBANON_COUNTRY_FALLBACK_RULES = [
         "apply_below_ratio": 0.90,
         "admin1_shares": {
             "al nabatieh": 0.32,
-            "south": 0.31,
+            "south": 0.33,
             "bekaa": 0.12,
-            "baalbek-hermel": 0.10,
-            "beirut": 0.09,
-            "mount lebanon": 0.04,
-            "north": 0.01,
-            "akkar": 0.01,
+            "baalbek-hermel": 0.12,
+            "beirut": 0.11,
+            "mount lebanon": 0.00,
+            "north": 0.00,
+            "akkar": 0.00,
         },
         "note": (
             "Adjusted fallback using a Lebanon March 2026 country estimate of about "
             "1.2 million, distributed across admin1 using an explicit Lebanon 2026 "
             "profile that emphasizes South, Al Nabatieh, Bekaa, Baalbek-Hermel, "
-            "and Beirut over Mount Lebanon because the source dataset is missing "
-            "or undercounting that month."
+            "and Beirut, while removing fallback allocation from North, Akkar, and "
+            "Mount Lebanon because the source dataset is missing or undercounting "
+            "that month."
         ),
     },
 ]
